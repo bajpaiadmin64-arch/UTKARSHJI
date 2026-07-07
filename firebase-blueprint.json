@@ -1,0 +1,46 @@
+{
+  "entities": {
+    "User": {
+      "title": "User",
+      "description": "User profile document containing contact details and profile status.",
+      "type": "object",
+      "properties": {
+        "uid": { "type": "string", "description": "The unique user ID matching Auth UID." },
+        "email": { "type": "string", "format": "email", "description": "User's email address." },
+        "fullName": { "type": "string", "description": "User's full name." },
+        "phone": { "type": "string", "description": "User's contact phone number." },
+        "createdAt": { "type": "string", "format": "date-time", "description": "Timestamp when the user profile was created." }
+      },
+      "required": ["uid", "email", "fullName", "createdAt"]
+    },
+    "Order": {
+      "title": "Order",
+      "description": "A design/development service order requested by the client.",
+      "type": "object",
+      "properties": {
+        "id": { "type": "string", "description": "The unique uppercase ID of the order." },
+        "userId": { "type": "string", "description": "The reference Auth UID of the ordering client." },
+        "serviceType": { "type": "string", "description": "The selected package or capability service name." },
+        "requirements": { "type": "string", "description": "Detailed client functional and visual requirements." },
+        "additionalNotes": { "type": "string", "description": "Optional custom messages or transaction logs." },
+        "budget": { "type": "string", "description": "Budget constraints or specific service price." },
+        "timeline": { "type": "string", "description": "Desired delivery timeline." },
+        "status": { "type": "string", "enum": ["pending", "in_progress", "completed", "cancelled", "confirmed"], "description": "Overall status of the order workflow." },
+        "paymentStatus": { "type": "string", "enum": ["unpaid", "pending_verification", "paid"], "description": "The processing status of the transaction payment." },
+        "transactionId": { "type": "string", "description": "The transaction ID submitted by the user." },
+        "createdAt": { "type": "string", "format": "date-time", "description": "Timestamp when the order was submitted." }
+      },
+      "required": ["id", "userId", "serviceType", "requirements", "status", "createdAt"]
+    }
+  },
+  "firestore": {
+    "users/{userId}": {
+      "schema": "User",
+      "description": "User accounts where documents are named by their respective UIDs."
+    },
+    "orders/{orderId}": {
+      "schema": "Order",
+      "description": "Client orders indexable by system-assigned order codes."
+    }
+  }
+}

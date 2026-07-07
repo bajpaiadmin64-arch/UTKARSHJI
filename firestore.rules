@@ -1,0 +1,28 @@
+rules_version = '2';
+
+service cloud.firestore {
+  match /databases/{database}/documents {
+    
+    // Global Safety Net default-deny
+    match /{document=**} {
+      allow read, write: if false;
+    }
+    
+    // Helper function to check if the user is the admin
+    function isAdmin() {
+      return request.auth != null && request.auth.token.email == 'bajpaiadmin64@gmail.com';
+    }
+    
+    // User profile rules: Users can only read and write their own profile, Admins can access all
+    match /users/{userId} {
+      allow read, write: if (request.auth != null && request.auth.uid == userId) || isAdmin();
+    }
+    
+    // Order rules: Authenticated users can create, read, and update their own orders. Admins have full access.
+    match /orders/{orderId} {
+      allow create: if (request.auth != null && request.resource.data.userId == request.auth.uid) || isAdmin();
+      allow read, update: if (request.auth != null && (resource.data.userId == request.auth.uid || isAdmin()));
+      allow delete: if isAdmin();
+    }
+  }
+}
