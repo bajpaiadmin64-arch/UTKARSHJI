@@ -1,6 +1,7 @@
 import express from "express";
 import path from "path";
 import fs from "fs";
+import crypto from "crypto";
 import { createServer as createViteServer } from "vite";
 import { GoogleGenAI } from "@google/genai";
 import dotenv from "dotenv";
@@ -62,9 +63,255 @@ if (apiKey) {
   console.warn("GEMINI_API_KEY environment variable is missing. Chat assistant will run in smart-simulation mode.");
 }
 
+// ==================== DATABASE CONFIG & HELPERS ====================
+
+const USERS_FILE = path.join(process.cwd(), "users_db.json");
+
+// Hash password with salt
+function hashPassword(password: string, salt: string): string {
+  return crypto.pbkdf2Sync(password, salt, 1000, 64, "sha512").toString("hex");
+}
+
+// Generate new salt and hash
+function saltAndHash(password: string) {
+  const salt = crypto.randomBytes(16).toString("hex");
+  const hash = hashPassword(password, salt);
+  return { salt, hash };
+}
+
+function readUsersDatabase() {
+  try {
+    if (!fs.existsSync(USERS_FILE)) {
+      // Pre-seed the system admin account safely with its correct credentials on initialization
+      const adminSalt = crypto.randomBytes(16).toString("hex");
+      const adminHash = crypto.pbkdf2Sync("BAJPAI@890", adminSalt, 1000, 64, "sha512").toString("hex");
+      const initialDb = {
+        users: [
+          {
+            uid: "admin-system-uid",
+            email: "bajpaiadmin64@gmail.com",
+            fullName: "Utkarsh Bajpai (Admin)",
+            phone: "7706929484",
+            whatsApp: "7706929484",
+            companyName: "U B Web Developer",
+            salt: adminSalt,
+            hash: adminHash,
+            createdAt: new Date().toISOString(),
+          }
+        ]
+      };
+      fs.writeFileSync(USERS_FILE, JSON.stringify(initialDb, null, 2));
+    }
+    const data = fs.readFileSync(USERS_FILE, "utf-8");
+    return JSON.parse(data);
+  } catch (err) {
+    console.error("Error reading users database:", err);
+    return { users: [] };
+  }
+}
+
+function writeUsersDatabase(data: any) {
+  try {
+    fs.writeFileSync(USERS_FILE, JSON.stringify(data, null, 2));
+  } catch (err) {
+    console.error("Error writing users database:", err);
+  }
+}
+
+// Initialize users database
+readUsersDatabase();
+
+// Session token generation & verification (HMAC-SHA256 Signed Tokens)
+const JWT_SECRET = process.env.JWT_SECRET || "ub-web-developer-super-secret-key-12345";
+
+function generateToken(payload: { uid: string; email: string }) {
+  const data = JSON.stringify({
+    ...payload,
+    exp: Date.now() + 24 * 60 * 60 * 1000 // Valid for 24 hours
+  });
+  const base64Payload = Buffer.from(data).toString("base64");
+  const signature = crypto.createHmac("sha256", JWT_SECRET).update(base64Payload).digest("hex");
+  return `${base64Payload}.${signature}`;
+}
+
+function verifyToken(token: string): { uid: string; email: string } | null {
+  try {
+    if (!token) return null;
+    const parts = token.split(".");
+    if (parts.length !== 2) return null;
+    const [base64Payload, signature] = parts;
+    const expectedSignature = crypto.createHmac("sha256", JWT_SECRET).update(base64Payload).digest("hex");
+    if (signature !== expectedSignature) return null;
+    const payloadStr = Buffer.from(base64Payload, "base64").toString("utf-8");
+    const payload = JSON.parse(payloadStr);
+    if (Date.now() > payload.exp) {
+      return null; // Expired
+    }
+    return payload;
+  } catch (e) {
+    return null;
+  }
+}
+
 // ==================== API ENDPOINTS ====================
 
-// 1. Submit a new order
+// 1. Auth Endpoint: User Registration
+app.post("/api/auth/register", (req, res) => {
+  try {
+    const { email, password, fullName, phone, whatsApp, companyName } = req.body;
+
+    // Rigid validation on both client and server sides
+    if (!email || !password || !fullName || !phone) {
+      return res.status(400).json({ error: "Required fields (Email, Password, Name, Phone) are missing." });
+    }
+
+    const emailRegex = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
+    if (!emailRegex.test(email)) {
+      return res.status(400).json({ error: "Invalid email format." });
+    }
+
+    if (password.length < 6) {
+      return res.status(400).json({ error: "The password must be at least 6 characters." });
+    }
+
+    const dbUsers = readUsersDatabase();
+    const existingUser = dbUsers.users.find((u: any) => u.email.toLowerCase() === email.toLowerCase());
+
+    if (existingUser) {
+      return res.status(400).json({ error: "An account with this email address already exists." });
+    }
+
+    const { salt, hash } = saltAndHash(password);
+    const uid = "usr-" + crypto.randomUUID();
+
+    const newUser = {
+      uid,
+      email: email.toLowerCase(),
+      fullName,
+      phone,
+      whatsApp: whatsApp || "",
+      companyName: companyName || "",
+      salt,
+      hash,
+      createdAt: new Date().toISOString()
+    };
+
+    dbUsers.users.push(newUser);
+    writeUsersDatabase(dbUsers);
+
+    const token = generateToken({ uid, email: newUser.email });
+
+    const userResponse = {
+      uid: newUser.uid,
+      email: newUser.email,
+      fullName: newUser.fullName,
+      phone: newUser.phone,
+      whatsApp: newUser.whatsApp,
+      companyName: newUser.companyName,
+      createdAt: newUser.createdAt
+    };
+
+    return res.status(201).json({
+      success: true,
+      token,
+      user: userResponse
+    });
+  } catch (err) {
+    console.error("Registration error:", err);
+    return res.status(500).json({ error: "Internal Server Error during registration." });
+  }
+});
+
+// 2. Auth Endpoint: Secure login with strict error outputs
+app.post("/api/auth/login", (req, res) => {
+  try {
+    const { email, password } = req.body;
+
+    // Input validation
+    if (!email || !password) {
+      return res.status(400).json({ error: "Please enter both email and password." });
+    }
+
+    const dbUsers = readUsersDatabase();
+    const user = dbUsers.users.find((u: any) => u.email.toLowerCase() === email.toLowerCase());
+
+    // Explicit error message if email does not exist
+    if (!user) {
+      return res.status(404).json({ error: "Email not found." });
+    }
+
+    // Secure verification
+    const computedHash = hashPassword(password, user.salt);
+    if (computedHash !== user.hash) {
+      return res.status(401).json({ error: "Incorrect password." });
+    }
+
+    const token = generateToken({ uid: user.uid, email: user.email });
+
+    const userResponse = {
+      uid: user.uid,
+      email: user.email,
+      fullName: user.fullName,
+      phone: user.phone,
+      whatsApp: user.whatsApp,
+      companyName: user.companyName,
+      createdAt: user.createdAt
+    };
+
+    return res.json({
+      success: true,
+      token,
+      user: userResponse
+    });
+  } catch (err) {
+    console.error("Login error:", err);
+    return res.status(500).json({ error: "Internal Server Error during login." });
+  }
+});
+
+// 3. Auth Endpoint: Validate active session (Who Am I)
+app.get("/api/auth/me", (req, res) => {
+  try {
+    const authHeader = req.headers.authorization;
+    if (!authHeader || !authHeader.startsWith("Bearer ")) {
+      return res.status(401).json({ error: "No session token found." });
+    }
+
+    const token = authHeader.split(" ")[1];
+    const decoded = verifyToken(token);
+
+    if (!decoded) {
+      return res.status(401).json({ error: "Session has expired. Please log in again." });
+    }
+
+    const dbUsers = readUsersDatabase();
+    const user = dbUsers.users.find((u: any) => u.uid === decoded.uid);
+
+    if (!user) {
+      return res.status(404).json({ error: "User not found." });
+    }
+
+    const userResponse = {
+      uid: user.uid,
+      email: user.email,
+      fullName: user.fullName,
+      phone: user.phone,
+      whatsApp: user.whatsApp,
+      companyName: user.companyName,
+      createdAt: user.createdAt
+    };
+
+    return res.json({
+      success: true,
+      user: userResponse
+    });
+  } catch (err) {
+    console.error("Auth me error:", err);
+    return res.status(500).json({ error: "Internal Server Error during session validation." });
+  }
+});
+
+// 4. Submit a new order (Securely binds to logged-in user)
 app.post("/api/orders", (req, res) => {
   try {
     const {
@@ -80,6 +327,7 @@ app.post("/api/orders", (req, res) => {
       fileName,
       fileData,
       additionalNotes,
+      userId
     } = req.body;
 
     if (!fullName || !email || !phone || !serviceRequired || !projectDescription) {
@@ -88,6 +336,7 @@ app.post("/api/orders", (req, res) => {
 
     const newOrder = {
       id: "UB-" + Math.floor(100000 + Math.random() * 900000),
+      userId: userId || "guest",
       fullName,
       companyName: companyName || "",
       email,
@@ -144,7 +393,7 @@ Attached File: ${fileName || "None"}
   }
 });
 
-// 2. Confirm payment for an order
+// 5. Confirm payment for an order
 app.post("/api/confirm-payment", (req, res) => {
   try {
     const { orderId, transactionId, utrNumber, clientNotes } = req.body;
@@ -192,9 +441,48 @@ Payment Status: pending_verification
   }
 });
 
-// 3. Admin / Dashboard endpoint for retrieving orders
+// 6. Client endpoint to securely fetch their own orders
+app.get("/api/my-orders", (req, res) => {
+  try {
+    const authHeader = req.headers.authorization;
+    if (!authHeader || !authHeader.startsWith("Bearer ")) {
+      return res.status(401).json({ error: "No session token found." });
+    }
+
+    const token = authHeader.split(" ")[1];
+    const decoded = verifyToken(token);
+
+    if (!decoded) {
+      return res.status(401).json({ error: "Session expired. Please log in again." });
+    }
+
+    const db = readDatabase();
+    const userOrders = db.orders.filter((o: any) => o.userId === decoded.uid || o.email?.toLowerCase() === decoded.email.toLowerCase());
+    
+    // Sort by newest first
+    const sorted = [...userOrders].sort((a: any, b: any) => new Date(b.createdAt).getTime() - new Date(a.createdAt).getTime());
+    return res.json({ success: true, orders: sorted });
+  } catch (error) {
+    console.error("Error fetching user orders:", error);
+    return res.status(500).json({ error: "Failed to read orders list." });
+  }
+});
+
+// 7. Secure Admin Endpoint: Retrieve ALL orders (Requires Verified System Administrator session)
 app.get("/api/orders", (req, res) => {
   try {
+    const authHeader = req.headers.authorization;
+    if (!authHeader || !authHeader.startsWith("Bearer ")) {
+      return res.status(401).json({ error: "No session token found." });
+    }
+
+    const token = authHeader.split(" ")[1];
+    const decoded = verifyToken(token);
+
+    if (!decoded || decoded.email !== "bajpaiadmin64@gmail.com") {
+      return res.status(403).json({ error: "Access denied. Administrator privileges required." });
+    }
+
     const db = readDatabase();
     // Sort orders by newest first
     const ordersSorted = [...db.orders].sort((a: any, b: any) => new Date(b.createdAt).getTime() - new Date(a.createdAt).getTime());
@@ -210,7 +498,76 @@ app.get("/api/orders", (req, res) => {
   }
 });
 
-// 4. Smart AI Assistant Chat Endpoint (Gemini powered)
+// 8. Secure Admin Endpoint: PATCH update an order (Requires Verified Admin session)
+app.patch("/api/orders/:id", (req, res) => {
+  try {
+    const authHeader = req.headers.authorization;
+    if (!authHeader || !authHeader.startsWith("Bearer ")) {
+      return res.status(401).json({ error: "No session token found." });
+    }
+
+    const token = authHeader.split(" ")[1];
+    const decoded = verifyToken(token);
+
+    if (!decoded || decoded.email !== "bajpaiadmin64@gmail.com") {
+      return res.status(403).json({ error: "Access denied. Administrator privileges required." });
+    }
+
+    const orderId = req.params.id;
+    const db = readDatabase();
+    const orderIndex = db.orders.findIndex((o: any) => o.id === orderId);
+
+    if (orderIndex === -1) {
+      return res.status(404).json({ error: "Order not found." });
+    }
+
+    // Merge the updated keys securely
+    db.orders[orderIndex] = {
+      ...db.orders[orderIndex],
+      ...req.body
+    };
+
+    writeDatabase(db);
+    return res.json({ success: true, order: db.orders[orderIndex] });
+  } catch (error) {
+    console.error("Error patching order:", error);
+    return res.status(500).json({ error: "Internal Server Error during order update." });
+  }
+});
+
+// 9. Secure Admin Endpoint: DELETE an order (Requires Verified Admin session)
+app.delete("/api/orders/:id", (req, res) => {
+  try {
+    const authHeader = req.headers.authorization;
+    if (!authHeader || !authHeader.startsWith("Bearer ")) {
+      return res.status(401).json({ error: "No session token found." });
+    }
+
+    const token = authHeader.split(" ")[1];
+    const decoded = verifyToken(token);
+
+    if (!decoded || decoded.email !== "bajpaiadmin64@gmail.com") {
+      return res.status(403).json({ error: "Access denied. Administrator privileges required." });
+    }
+
+    const orderId = req.params.id;
+    const db = readDatabase();
+    const filteredOrders = db.orders.filter((o: any) => o.id !== orderId);
+
+    if (filteredOrders.length === db.orders.length) {
+      return res.status(404).json({ error: "Order not found." });
+    }
+
+    db.orders = filteredOrders;
+    writeDatabase(db);
+    return res.json({ success: true, message: "Order deleted successfully." });
+  } catch (error) {
+    console.error("Error deleting order:", error);
+    return res.status(500).json({ error: "Internal Server Error during order deletion." });
+  }
+});
+
+// 10. Smart AI Assistant Chat Endpoint (Gemini powered)
 app.post("/api/chat", async (req, res) => {
   try {
     const { messages } = req.body;

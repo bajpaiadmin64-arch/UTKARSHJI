@@ -1,7 +1,5 @@
 import React, { useState, useEffect } from 'react';
 import { Copy, Check, QrCode, Sparkles, Send, ShieldCheck, CheckCircle2, AlertCircle, Loader2 } from 'lucide-react';
-import { doc, getDoc, updateDoc } from 'firebase/firestore';
-import { db, handleFirestoreError, OperationType } from '../lib/firebase';
 
 interface PaymentProps {
   orderId: string;
@@ -67,76 +65,6 @@ export default function Payment({ orderId, amount }: PaymentProps) {
 
       if (!res.ok) {
         throw new Error(data.error || 'Verification request rejected');
-      }
-
-      // 2. Synchronize payment confirmation state with Firestore/LocalStorage
-      let updatedSandbox = false;
-      const savedOrders = localStorage.getItem('ub_sandbox_orders');
-      if (savedOrders) {
-        try {
-          const orders = JSON.parse(savedOrders);
-          const matchIndex = orders.findIndex((o: any) => o.id.toLowerCase() === inputOrderId.toLowerCase());
-          if (matchIndex !== -1) {
-            const o = orders[matchIndex];
-            const currentNotes = o.additionalNotes || '';
-            const newNotes = currentNotes + (clientNotes ? "\n[Payment Confirmation Notes]: " + clientNotes : '');
-            orders[matchIndex] = {
-              ...o,
-              paymentStatus: 'pending_verification',
-              transactionId: transactionId,
-              status: 'confirmed',
-              additionalNotes: newNotes
-            };
-            localStorage.setItem('ub_sandbox_orders', JSON.stringify(orders));
-            console.log('[SANDBOX SUCCESS] Order payment reference synchronized in localStorage.');
-            updatedSandbox = true;
-          }
-        } catch (e) {
-          console.error('[SANDBOX ERROR] Failed to parse sandbox orders:', e);
-        }
-      }
-
-      if (!updatedSandbox) {
-        try {
-          const orderDocRef = doc(db, 'orders', inputOrderId.toUpperCase());
-          const orderSnap = await getDoc(orderDocRef);
-          if (orderSnap.exists()) {
-            const currentNotes = orderSnap.data().additionalNotes || '';
-            const newNotes = currentNotes + (clientNotes ? "\n[Payment Confirmation Notes]: " + clientNotes : '');
-            await updateDoc(orderDocRef, {
-              paymentStatus: 'pending_verification',
-              transactionId: transactionId,
-              status: 'confirmed',
-              additionalNotes: newNotes
-            });
-            console.log('[FIRESTORE SUCCESS] Order payment reference synchronized.');
-          } else {
-            // Retry matching exactly if user didn't uppercase
-            const orderDocRefLower = doc(db, 'orders', inputOrderId);
-            const orderSnapLower = await getDoc(orderDocRefLower);
-            if (orderSnapLower.exists()) {
-              const currentNotes = orderSnapLower.data().additionalNotes || '';
-              const newNotes = currentNotes + (clientNotes ? "\n[Payment Confirmation Notes]: " + clientNotes : '');
-              await updateDoc(orderDocRefLower, {
-                paymentStatus: 'pending_verification',
-                transactionId: transactionId,
-                status: 'confirmed',
-                additionalNotes: newNotes
-              });
-              console.log('[FIRESTORE SUCCESS] Order payment reference synchronized (lower match).');
-            } else {
-              console.warn('[FIRESTORE WARN] Order ID not found in Firestore. Payment processed with local backend ledger fallback.');
-            }
-          }
-        } catch (fbErr: any) {
-          console.error('Firestore synchronisation bypass error:', fbErr);
-          // If the error is missing permissions, we do not crash or throw uncaught exception.
-          if (fbErr.code === 'permission-denied') {
-            console.warn('Firestore permissions denied. Continuing with node backend ledger success confirmation.');
-          } else {
-            handleFirestoreError(fbErr, OperationType.UPDATE, `orders/${inputOrderId}`);
-          }
-        }
       }
 
       setSuccessConfirm(true);

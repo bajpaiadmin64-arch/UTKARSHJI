@@ -1,18 +1,12 @@
 import React, { createContext, useContext, useEffect, useState } from 'react';
-import { 
-  User, 
-  onAuthStateChanged, 
-  signInWithEmailAndPassword, 
-  createUserWithEmailAndPassword, 
-  signOut as firebaseSignOut,
-  updateProfile,
-  GoogleAuthProvider,
-  signInWithPopup
-} from 'firebase/auth';
-import { doc, setDoc, getDoc } from 'firebase/firestore';
-import { auth, db, handleFirestoreError, OperationType } from '../lib/firebase';
 
-interface UserProfile {
+export interface User {
+  uid: string;
+  email: string;
+  displayName: string;
+}
+
+export interface UserProfile {
   uid: string;
   fullName: string;
   email: string;
@@ -45,155 +39,125 @@ export function useAuth() {
 
 export function AuthProvider({ children }: { children: React.ReactNode }) {
   const [currentUser, setCurrentUser] = useState<User | null>(null);
-  const [mockUser, setMockUser] = useState<any | null>(null);
   const [userProfile, setUserProfile] = useState<UserProfile | null>(null);
   const [loading, setLoading] = useState(true);
 
+  // Exchange or validate stored token on application mount
   useEffect(() => {
-    const unsubscribe = onAuthStateChanged(auth, async (user) => {
-      setCurrentUser(user);
-      if (user) {
-        setMockUser(null);
-        // Fetch Firestore profile
-        try {
-          const docRef = doc(db, 'users', user.uid);
-          let docSnap;
-          try {
-            docSnap = await getDoc(docRef);
-          } catch (err) {
-            handleFirestoreError(err, OperationType.GET, `users/${user.uid}`);
-            return;
-          }
-
-          if (docSnap.exists()) {
-            setUserProfile(docSnap.data() as UserProfile);
-          } else {
-            // Profile does not exist yet (e.g. if registered elsewhere or oauth), create minimal
-            const minimalProfile: UserProfile = {
-              uid: user.uid,
-              fullName: user.displayName || 'Client Partner',
-              email: user.email || '',
-              phone: '',
-              createdAt: new Date().toISOString()
-            };
-            try {
-              await setDoc(docRef, minimalProfile);
-            } catch (err) {
-              handleFirestoreError(err, OperationType.WRITE, `users/${user.uid}`);
-              return;
-            }
-            setUserProfile(minimalProfile);
-          }
-        } catch (err) {
-          console.error('Error fetching user profile:', err);
-        }
-      } else {
-        if (!mockUser) {
-          setUserProfile(null);
-        }
-      }
-      setLoading(false);
-    });
-
-    return unsubscribe;
-  }, [mockUser]);
-
-  const login = async (email: string, pass: string) => {
-    try {
-      await signInWithEmailAndPassword(auth, email, pass);
-    } catch (err: any) {
-      if (err.code === 'auth/operation-not-allowed') {
-        console.warn('Firebase Auth email/password provider is disabled. Using sandbox login fallback.');
-        const isSystemAdmin = email === 'bajpaiadmin64@gmail.com' && pass === 'BAJPAI@890';
-        const mockUid = isSystemAdmin ? 'admin-sandbox-uid' : 'user-sandbox-' + Math.random().toString(36).substring(2, 9);
-        const name = isSystemAdmin ? 'Bajpai Admin (Sandbox)' : email.split('@')[0];
-        
-        const fallbackProfile: UserProfile = {
-          uid: mockUid,
-          fullName: name,
-          email: email,
-          phone: isSystemAdmin ? '7706929484' : '',
-          createdAt: new Date().toISOString()
-        };
-        
-        setMockUser({
-          uid: mockUid,
-          email: email,
-          displayName: name,
-          emailVerified: true
-        });
-        setUserProfile(fallbackProfile);
+    const validateSession = async () => {
+      const token = localStorage.getItem('ub_auth_token');
+      if (!token) {
+        setLoading(false);
         return;
       }
-      throw err;
+
+      try {
+        const res = await fetch('/api/auth/me', {
+          headers: {
+            'Authorization': `Bearer ${token}`
+          }
+        });
+        
+        if (res.ok) {
+          const data = await res.json();
+          if (data.success && data.user) {
+            setCurrentUser({
+              uid: data.user.uid,
+              email: data.user.email,
+              displayName: data.user.fullName
+            });
+            setUserProfile(data.user);
+          } else {
+            localStorage.removeItem('ub_auth_token');
+          }
+        } else {
+          localStorage.removeItem('ub_auth_token');
+        }
+      } catch (err) {
+        console.error('Session validation connection failed:', err);
+      } finally {
+        setLoading(false);
+      }
+    };
+
+    validateSession();
+  }, []);
+
+  const login = async (email: string, pass: string) => {
+    if (!email || !pass) {
+      throw new Error('Please enter both your email and password.');
     }
+
+    const res = await fetch('/api/auth/login', {
+      method: 'POST',
+      headers: {
+        'Content-Type': 'application/json'
+      },
+      body: JSON.stringify({ email, password: pass })
+    });
+
+    const data = await res.json();
+
+    if (!res.ok) {
+      // Throw exact backend messages like "Email not found." or "Incorrect password."
+      throw new Error(data.error || 'Authentication failed.');
+    }
+
+    localStorage.setItem('ub_auth_token', data.token);
+    setCurrentUser({
+      uid: data.user.uid,
+      email: data.user.email,
+      displayName: data.user.fullName
+    });
+    setUserProfile(data.user);
   };
 
   const register = async (email: string, pass: string, profile: Omit<UserProfile, 'uid' | 'createdAt'>) => {
-    try {
-      const credential = await createUserWithEmailAndPassword(auth, email, pass);
-      const user = credential.user;
+    if (!email || !pass || !profile.fullName || !profile.phone) {
+      throw new Error('All mandatory fields must be filled.');
+    }
 
-      // Update Auth Profile displayName
-      await updateProfile(user, {
-        displayName: profile.fullName
-      });
-
-      const newProfile: UserProfile = {
-        uid: user.uid,
+    const res = await fetch('/api/auth/register', {
+      method: 'POST',
+      headers: {
+        'Content-Type': 'application/json'
+      },
+      body: JSON.stringify({
+        email,
+        password: pass,
         fullName: profile.fullName,
-        email: email,
         phone: profile.phone,
         whatsApp: profile.whatsApp || '',
-        companyName: profile.companyName || '',
-        createdAt: new Date().toISOString()
-      };
+        companyName: profile.companyName || ''
+      })
+    });
 
-      // Save profile to firestore
-      try {
-        await setDoc(doc(db, 'users', user.uid), newProfile);
-      } catch (err) {
-        handleFirestoreError(err, OperationType.WRITE, `users/${user.uid}`);
-      }
-      setUserProfile(newProfile);
-    } catch (err: any) {
-      if (err.code === 'auth/operation-not-allowed') {
-        console.warn('Firebase Auth email/password provider is disabled. Using sandbox registration fallback.');
-        const mockUid = 'user-sandbox-' + Math.random().toString(36).substring(2, 9);
-        const fallbackProfile: UserProfile = {
-          uid: mockUid,
-          fullName: profile.fullName,
-          email: email,
-          phone: profile.phone,
-          whatsApp: profile.whatsApp || '',
-          companyName: profile.companyName || '',
-          createdAt: new Date().toISOString()
-        };
-        setMockUser({
-          uid: mockUid,
-          email: email,
-          displayName: profile.fullName,
-          emailVerified: true
-        });
-        setUserProfile(fallbackProfile);
-        return;
-      }
-      throw err;
+    const data = await res.json();
+
+    if (!res.ok) {
+      throw new Error(data.error || 'Registration failed.');
     }
+
+    localStorage.setItem('ub_auth_token', data.token);
+    setCurrentUser({
+      uid: data.user.uid,
+      email: data.user.email,
+      displayName: data.user.fullName
+    });
+    setUserProfile(data.user);
   };
 
   const signInWithGoogle = async () => {
-    const provider = new GoogleAuthProvider();
-    await signInWithPopup(auth, provider);
+    throw new Error('Google Sign-In is not configured. Please register with email & password.');
   };
 
   const logout = async () => {
-    setMockUser(null);
+    localStorage.removeItem('ub_auth_token');
+    setCurrentUser(null);
     setUserProfile(null);
-    await firebaseSignOut(auth);
   };
 
-  const activeUser = currentUser || mockUser;
+  const activeUser = currentUser;
 
   const value = {
     currentUser: activeUser,

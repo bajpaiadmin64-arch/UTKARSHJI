@@ -139,30 +139,41 @@ export default function AdminPortal({ onClose }: AdminPortalProps) {
     setLoadingOrders(true);
     setOrdersError('');
 
-    const isSandboxMode = currentUser?.uid === 'admin-sandbox-uid' || currentUser?.uid?.startsWith('user-sandbox-');
+    const fetchAdminOrders = async () => {
+      const token = localStorage.getItem('ub_auth_token');
+      if (!token) {
+        setOrdersError('Authentication token not found.');
+        setLoadingOrders(false);
+        return;
+      }
 
-    if (isSandboxMode) {
-      const sandboxOrders = getInitialSandboxOrders();
-      setOrders(sandboxOrders);
-      setLoadingOrders(false);
-      return () => {};
-    }
+      try {
+        const res = await fetch('/api/orders', {
+          headers: {
+            'Authorization': `Bearer ${token}`
+          }
+        });
 
-    const q = query(collection(db, 'orders'), orderBy('createdAt', 'desc'));
-    const unsubscribe = onSnapshot(q, (snapshot) => {
-      const ordersList: any[] = [];
-      snapshot.forEach((doc) => {
-        ordersList.push({ id: doc.id, ...doc.data() });
-      });
-      setOrders(ordersList);
-      setLoadingOrders(false);
-    }, (error) => {
-      console.error('Admin listen error:', error);
-      setOrdersError('Failed to fetch orders. Firestore permissions may be syncing.');
-      setLoadingOrders(false);
-    });
+        if (res.ok) {
+          const data = await res.json();
+          setOrders(data.orders || []);
+          setOrdersError('');
+        } else {
+          const data = await res.json();
+          setOrdersError(data.error || 'Failed to fetch admin orders.');
+        }
+      } catch (err) {
+        console.error('Fetch admin orders error:', err);
+        setOrdersError('Network connection failure.');
+      } finally {
+        setLoadingOrders(false);
+      }
+    };
 
-    return unsubscribe;
+    fetchAdminOrders();
+    // Refresh every 10 seconds to make it responsive / quasi-realtime
+    const interval = setInterval(fetchAdminOrders, 10000);
+    return () => clearInterval(interval);
   }, [currentUser, isAdmin]);
 
   const showNotification = (type: 'success' | 'error', text: string) => {
@@ -217,12 +228,24 @@ export default function AdminPortal({ onClose }: AdminPortalProps) {
     }
 
     try {
-      const orderRef = doc(db, 'orders', orderId);
-      await updateDoc(orderRef, { [field]: value });
+      const token = localStorage.getItem('ub_auth_token');
+      const res = await fetch(`/api/orders/${orderId}`, {
+        method: 'PATCH',
+        headers: {
+          'Content-Type': 'application/json',
+          'Authorization': `Bearer ${token}`
+        },
+        body: JSON.stringify({ [field]: value })
+      });
+      if (!res.ok) {
+        const data = await res.json();
+        throw new Error(data.error || 'Failed to update order status');
+      }
+      setOrders(prev => prev.map(o => o.id === orderId ? { ...o, [field]: value } : o));
       showNotification('success', `Order ${orderId} ${field} successfully updated to "${value}"`);
-    } catch (err) {
+    } catch (err: any) {
       console.error('Error updating order:', err);
-      showNotification('error', 'Failed to update order in Firestore database.');
+      showNotification('error', err.message || 'Failed to update order in database.');
     }
   };
 
@@ -244,27 +267,39 @@ export default function AdminPortal({ onClose }: AdminPortalProps) {
     }
 
     try {
-      const orderRef = doc(db, 'orders', selectedOrder.id);
-      await updateDoc(orderRef, {
-        fullName: selectedOrder.fullName,
-        email: selectedOrder.email,
-        phone: selectedOrder.phone,
-        whatsApp: selectedOrder.whatsApp || '',
-        companyName: selectedOrder.companyName || '',
-        serviceRequired: selectedOrder.serviceRequired,
-        budget: selectedOrder.budget,
-        deadline: selectedOrder.deadline,
-        projectDescription: selectedOrder.projectDescription,
-        additionalNotes: selectedOrder.additionalNotes || '',
-        status: selectedOrder.status,
-        paymentStatus: selectedOrder.paymentStatus,
-        transactionId: selectedOrder.transactionId || ''
+      const token = localStorage.getItem('ub_auth_token');
+      const res = await fetch(`/api/orders/${selectedOrder.id}`, {
+        method: 'PATCH',
+        headers: {
+          'Content-Type': 'application/json',
+          'Authorization': `Bearer ${token}`
+        },
+        body: JSON.stringify({
+          fullName: selectedOrder.fullName,
+          email: selectedOrder.email,
+          phone: selectedOrder.phone,
+          whatsApp: selectedOrder.whatsApp || '',
+          companyName: selectedOrder.companyName || '',
+          serviceRequired: selectedOrder.serviceRequired,
+          budget: selectedOrder.budget,
+          deadline: selectedOrder.deadline,
+          projectDescription: selectedOrder.projectDescription,
+          additionalNotes: selectedOrder.additionalNotes || '',
+          status: selectedOrder.status,
+          paymentStatus: selectedOrder.paymentStatus,
+          transactionId: selectedOrder.transactionId || ''
+        })
       });
+      if (!res.ok) {
+        const data = await res.json();
+        throw new Error(data.error || 'Failed to save order changes');
+      }
+      setOrders(prev => prev.map(o => o.id === selectedOrder.id ? { ...selectedOrder } : o));
       setIsEditModalOpen(false);
       showNotification('success', `Successfully saved changes for order: ${selectedOrder.id}`);
-    } catch (err) {
+    } catch (err: any) {
       console.error('Error saving edits:', err);
-      showNotification('error', 'Failed to save changes.');
+      showNotification('error', err.message || 'Failed to save changes.');
     } finally {
       setSavingChanges(false);
     }
@@ -286,12 +321,22 @@ export default function AdminPortal({ onClose }: AdminPortalProps) {
     }
 
     try {
-      const orderRef = doc(db, 'orders', orderId);
-      await deleteDoc(orderRef);
+      const token = localStorage.getItem('ub_auth_token');
+      const res = await fetch(`/api/orders/${orderId}`, {
+        method: 'DELETE',
+        headers: {
+          'Authorization': `Bearer ${token}`
+        }
+      });
+      if (!res.ok) {
+        const data = await res.json();
+        throw new Error(data.error || 'Failed to delete order');
+      }
+      setOrders(prev => prev.filter(o => o.id !== orderId));
       showNotification('success', `Order ${orderId} was successfully deleted.`);
-    } catch (err) {
+    } catch (err: any) {
       console.error('Error deleting order:', err);
-      showNotification('error', 'Deletion failed due to insufficient permissions.');
+      showNotification('error', err.message || 'Deletion failed.');
     }
   };
 
@@ -368,24 +413,31 @@ export default function AdminPortal({ onClose }: AdminPortalProps) {
         projectDescription: createForm.projectDescription,
         additionalNotes: createForm.additionalNotes || '',
         fileName: null,
-        fileData: null
+        fileData: null,
+        userId: currentUser?.uid || 'admin_direct'
       };
 
-      try {
-        const res = await fetch('/api/orders', {
-          method: 'POST',
-          headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify(payload),
-        });
-        if (!res.ok) {
-          console.warn('Backend API Sync rejected order creation but proceeding to write directly to Firestore.');
-        }
-      } catch (apiErr) {
-        console.error('Express sync warning:', apiErr);
+      const res = await fetch('/api/orders', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify(payload),
+      });
+      if (!res.ok) {
+        const data = await res.json();
+        throw new Error(data.error || 'Backend Sync rejected order creation');
       }
 
-      // Submit to Firebase Firestore
-      await setDoc(doc(db, 'orders', orderId), orderPayload);
+      // Manually push new order to local list for snappy UI updates
+      setOrders(prev => [
+        {
+          ...payload,
+          id: orderId,
+          status: createForm.status,
+          paymentStatus: createForm.paymentStatus,
+          createdAt
+        },
+        ...prev
+      ]);
 
       showNotification('success', `Successfully created new order: ${orderId}`);
       setActiveTab('orders');
@@ -405,9 +457,9 @@ export default function AdminPortal({ onClose }: AdminPortalProps) {
         status: 'pending',
         paymentStatus: 'unpaid'
       });
-    } catch (err) {
+    } catch (err: any) {
       console.error('Error creating order:', err);
-      showNotification('error', 'Failed to submit direct admin order.');
+      showNotification('error', err.message || 'Failed to submit direct admin order.');
     } finally {
       setCreatingOrder(false);
     }

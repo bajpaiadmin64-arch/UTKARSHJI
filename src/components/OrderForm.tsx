@@ -54,77 +54,46 @@ export default function OrderForm({ selectedService, onOrderSuccess }: OrderForm
     }
   }, [currentUser, userProfile]);
 
-  // Real-time Firestore or Sandbox order history listener
+  // Real-time or periodic secure backend order history loader
   useEffect(() => {
     if (!currentUser) {
       setOrders([]);
       return;
     }
 
-    const isSandboxMode = currentUser?.uid === 'admin-sandbox-uid' || currentUser?.uid?.startsWith('user-sandbox-');
-
-    if (isSandboxMode) {
-      setLoadingOrders(true);
-      const loadSandboxOrders = () => {
-        const saved = localStorage.getItem('ub_sandbox_orders');
-        if (saved) {
-          try {
-            const parsed = JSON.parse(saved);
-            const filtered = parsed.filter((o: any) => o.userId === currentUser.uid || o.userId === 'admin_direct');
-            setOrders(filtered);
-          } catch (e) {
-            console.error(e);
-            setOrders([]);
-          }
-        } else {
-          setOrders([]);
-        }
-        setLoadingOrders(false);
-      };
-
-      loadSandboxOrders();
-
-      const handleStorageChange = (e: StorageEvent) => {
-        if (e.key === 'ub_sandbox_orders') {
-          loadSandboxOrders();
-        }
-      };
-      window.addEventListener('storage', handleStorageChange);
-
-      const interval = setInterval(loadSandboxOrders, 1000);
-
-      return () => {
-        window.removeEventListener('storage', handleStorageChange);
-        clearInterval(interval);
-      };
-    }
-
     setLoadingOrders(true);
-    const q = query(
-      collection(db, 'orders'),
-      where('userId', '==', currentUser.uid)
-    );
 
-    const unsubscribe = onSnapshot(q, (snapshot) => {
-      const fetchedOrders = snapshot.docs.map((doc) => ({
-        docId: doc.id,
-        ...doc.data()
-      }));
-      // Sort client-side by date because combined index might not be configured yet, ensuring zero errors
-      fetchedOrders.sort((a: any, b: any) => new Date(b.createdAt).getTime() - new Date(a.createdAt).getTime());
-      setOrders(fetchedOrders);
-      setLoadingOrders(false);
-    }, (error) => {
-      console.error('Error listening to orders:', error);
-      setLoadingOrders(false);
-      if (error.code === 'permission-denied') {
-        console.warn('Firestore subscription permission denied. Try logging out and logging in to trigger sandbox session.');
-      } else {
-        handleFirestoreError(error, OperationType.LIST, 'orders');
+    const fetchMyOrders = async () => {
+      const token = localStorage.getItem('ub_auth_token');
+      if (!token) {
+        setLoadingOrders(false);
+        return;
       }
-    });
 
-    return unsubscribe;
+      try {
+        const res = await fetch('/api/my-orders', {
+          headers: {
+            'Authorization': `Bearer ${token}`
+          }
+        });
+
+        if (res.ok) {
+          const data = await res.json();
+          setOrders(data.orders || []);
+        } else {
+          console.error('Failed to fetch orders from backend');
+        }
+      } catch (err) {
+        console.error('Fetch my orders error:', err);
+      } finally {
+        setLoadingOrders(false);
+      }
+    };
+
+    fetchMyOrders();
+    // Refresh client orders every 10 seconds
+    const interval = setInterval(fetchMyOrders, 10000);
+    return () => clearInterval(interval);
   }, [currentUser]);
 
   // Synchronize incoming selected service from parent callbacks
@@ -208,13 +177,13 @@ export default function OrderForm({ selectedService, onOrderSuccess }: OrderForm
 
     try {
       const orderId = "UB-" + Math.floor(100000 + Math.random() * 900000);
-      const createdAt = new Date().toISOString();
 
       const payload = {
         ...formData,
         id: orderId,
         fileName: file ? file.name : null,
         fileData: fileBase64 || null,
+        userId: currentUser.uid
       };
 
       // 1. Submit to API backend (triggers local state save & logs email)
@@ -232,66 +201,11 @@ export default function OrderForm({ selectedService, onOrderSuccess }: OrderForm
         throw new Error(data.error || 'Server rejected order submission');
       }
 
-      // 2. Submit to Firebase Firestore or Local Sandbox storage for persistent storage
-      const firestoreOrder = {
-        id: orderId,
-        userId: currentUser.uid,
-        fullName: formData.fullName,
-        companyName: formData.companyName || '',
-        email: formData.email,
-        phone: formData.phone,
-        whatsApp: formData.whatsApp || '',
-        serviceRequired: formData.serviceRequired,
-        budget: formData.budget || 'Flexible',
-        deadline: formData.deadline || 'Flexible',
-        projectDescription: formData.projectDescription,
-        fileName: file ? file.name : null,
-        additionalNotes: formData.additionalNotes || '',
-        status: 'pending',
-        paymentStatus: 'unpaid',
-        createdAt: createdAt
-      };
-
-      const isSandboxMode = currentUser?.uid === 'admin-sandbox-uid' || currentUser?.uid?.startsWith('user-sandbox-');
-
-      if (isSandboxMode) {
-        const saved = localStorage.getItem('ub_sandbox_orders');
-        let sandboxOrders = [];
-        if (saved) {
-          try {
-            sandboxOrders = JSON.parse(saved);
-          } catch (e) {
-            console.error(e);
-          }
-        }
-        sandboxOrders.unshift(firestoreOrder);
-        localStorage.setItem('ub_sandbox_orders', JSON.stringify(sandboxOrders));
-        console.log('[SANDBOX SUCCESS] Order saved in local sandbox collection.');
-      } else {
-        try {
-          await setDoc(doc(db, 'orders', orderId), firestoreOrder);
-        } catch (err: any) {
-          if (err.code === 'permission-denied') {
-            console.warn('Firestore permissions denied. Falling back to local sandbox storage.');
-            const saved = localStorage.getItem('ub_sandbox_orders') || '[]';
-            try {
-              const sandboxOrders = JSON.parse(saved);
-              sandboxOrders.unshift(firestoreOrder);
-              localStorage.setItem('ub_sandbox_orders', JSON.stringify(sandboxOrders));
-            } catch (e) {
-              console.error(e);
-            }
-          } else {
-            handleFirestoreError(err, OperationType.WRITE, `orders/${orderId}`);
-          }
-        }
-      }
-
       // Successfully saved
-      setSuccessOrder(firestoreOrder);
+      setSuccessOrder(data.order);
       
       // Trigger parent handler to auto-populate payment desk with this Order ID
-      onOrderSuccess(orderId, formData.budget || 'Flexible');
+      onOrderSuccess(data.order.id, formData.budget || 'Flexible');
 
       // Clear layout-specific fields, retaining user profile fields
       setFormData((prev) => ({
