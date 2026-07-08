@@ -2,11 +2,10 @@ import React, { useState, useEffect } from 'react';
 import { 
   Terminal, ShieldAlert, KeyRound, Loader2, RefreshCw, PlusCircle, Trash2, 
   Search, Filter, ClipboardList, CheckCircle2, AlertTriangle, Clock, X, Eye, 
-  ArrowLeft, Mail, Phone, DollarSign, UserCheck, ShieldCheck, Check, Info, FileText
+  ArrowLeft, Mail, Phone, DollarSign, UserCheck, ShieldCheck, Check, Info, FileText,
+  Download, Star, MessageSquare
 } from 'lucide-react';
 import { useAuth } from '../context/AuthContext';
-import { db, handleFirestoreError, OperationType } from '../lib/firebase';
-import { collection, query, orderBy, onSnapshot, doc, updateDoc, deleteDoc, setDoc } from 'firebase/firestore';
 
 interface AdminPortalProps {
   onClose: () => void;
@@ -14,7 +13,7 @@ interface AdminPortalProps {
 
 export default function AdminPortal({ onClose }: AdminPortalProps) {
   const { currentUser, isAdmin, login, logout, userProfile } = useAuth();
-  const [activeTab, setActiveTab] = useState<'orders' | 'create'>('orders');
+  const [activeTab, setActiveTab] = useState<'orders' | 'create' | 'reviews'>('orders');
   
   // Auth Form State
   const [loginEmail, setLoginEmail] = useState('bajpaiadmin64@gmail.com');
@@ -26,6 +25,13 @@ export default function AdminPortal({ onClose }: AdminPortalProps) {
   const [orders, setOrders] = useState<any[]>([]);
   const [loadingOrders, setLoadingOrders] = useState(true);
   const [ordersError, setOrdersError] = useState('');
+
+  // Firestore Reviews State
+  const [reviews, setReviews] = useState<any[]>([]);
+  const [loadingReviews, setLoadingReviews] = useState(false);
+  const [reviewsError, setReviewsError] = useState('');
+  const [reviewSearchTerm, setReviewSearchTerm] = useState('');
+  const [reviewStatusFilter, setReviewStatusFilter] = useState<'all' | 'pending' | 'approved'>('all');
 
   // Filters State
   const [searchTerm, setSearchTerm] = useState('');
@@ -175,6 +181,94 @@ export default function AdminPortal({ onClose }: AdminPortalProps) {
     const interval = setInterval(fetchAdminOrders, 10000);
     return () => clearInterval(interval);
   }, [currentUser, isAdmin]);
+
+  // Load reviews only when logged in as admin
+  useEffect(() => {
+    if (!currentUser || !isAdmin) {
+      setReviews([]);
+      setLoadingReviews(false);
+      return;
+    }
+
+    const fetchAdminReviews = async () => {
+      setLoadingReviews(true);
+      const token = localStorage.getItem('ub_auth_token');
+      if (!token) return;
+
+      try {
+        const res = await fetch('/api/admin/reviews', {
+          headers: {
+            'Authorization': `Bearer ${token}`
+          }
+        });
+
+        if (res.ok) {
+          const data = await res.json();
+          setReviews(data.reviews || []);
+          setReviewsError('');
+        } else {
+          const data = await res.json();
+          setReviewsError(data.error || 'Failed to fetch admin reviews.');
+        }
+      } catch (err) {
+        console.error('Fetch admin reviews error:', err);
+        setReviewsError('Network connection failure.');
+      } finally {
+        setLoadingReviews(false);
+      }
+    };
+
+    fetchAdminReviews();
+    const interval = setInterval(fetchAdminReviews, 15000);
+    return () => clearInterval(interval);
+  }, [currentUser, isAdmin]);
+
+  const handleUpdateReviewField = async (reviewId: string, field: string, value: any) => {
+    try {
+      const token = localStorage.getItem('ub_auth_token');
+      const res = await fetch(`/api/admin/reviews/${reviewId}`, {
+        method: 'PATCH',
+        headers: {
+          'Content-Type': 'application/json',
+          'Authorization': `Bearer ${token}`
+        },
+        body: JSON.stringify({ [field]: value })
+      });
+      if (!res.ok) {
+        const data = await res.json();
+        throw new Error(data.error || 'Failed to update review status');
+      }
+      setReviews(prev => prev.map(r => r.id === reviewId ? { ...r, [field]: value } : r));
+      showNotification('success', `Review successfully updated: ${field} = ${value}`);
+    } catch (err: any) {
+      console.error('Error updating review:', err);
+      showNotification('error', err.message || 'Failed to update review status.');
+    }
+  };
+
+  const handleDeleteReview = async (reviewId: string) => {
+    if (!window.confirm(`Are you sure you want to permanently delete review ${reviewId}?`)) {
+      return;
+    }
+    try {
+      const token = localStorage.getItem('ub_auth_token');
+      const res = await fetch(`/api/admin/reviews/${reviewId}`, {
+        method: 'DELETE',
+        headers: {
+          'Authorization': `Bearer ${token}`
+        }
+      });
+      if (!res.ok) {
+        const data = await res.json();
+        throw new Error(data.error || 'Failed to delete review');
+      }
+      setReviews(prev => prev.filter(r => r.id !== reviewId));
+      showNotification('success', `Review ${reviewId} successfully deleted.`);
+    } catch (err: any) {
+      console.error('Error deleting review:', err);
+      showNotification('error', err.message || 'Failed to delete review.');
+    }
+  };
 
   const showNotification = (type: 'success' | 'error', text: string) => {
     setNotification({ type, text });
@@ -492,6 +586,36 @@ export default function AdminPortal({ onClose }: AdminPortalProps) {
       return sum + cleanAmt;
     }, 0);
 
+  const handleExportCSV = () => {
+    const headers = [
+      "Order ID", "Date", "Client Name", "Email", "Phone", "WhatsApp", 
+      "Service Required", "Budget", "Timeline", "Status", "Payment Status", "Transaction ID"
+    ];
+    const rows = filteredOrders.map(o => [
+      o.id,
+      new Date(o.createdAt).toLocaleDateString(),
+      o.fullName,
+      o.email,
+      o.phone,
+      o.whatsApp || "",
+      o.serviceRequired,
+      o.budget,
+      o.deadline,
+      o.status,
+      o.paymentStatus,
+      o.transactionId || ""
+    ]);
+    const csvContent = "data:text/csv;charset=utf-8," 
+      + [headers.join(","), ...rows.map(e => e.map(val => `"${String(val).replace(/"/g, '""')}"`).join(","))].join("\n");
+    const encodedUri = encodeURI(csvContent);
+    const link = document.createElement("a");
+    link.setAttribute("href", encodedUri);
+    link.setAttribute("download", `UB_WebDeveloper_Orders_${new Date().toISOString().split('T')[0]}.csv`);
+    document.body.appendChild(link);
+    link.click();
+    document.body.removeChild(link);
+  };
+
   // Authentication Guard Screen
   if (!currentUser || !isAdmin) {
     return (
@@ -640,6 +764,16 @@ export default function AdminPortal({ onClose }: AdminPortalProps) {
               Manage Orders
             </button>
             <button
+              onClick={() => setActiveTab('reviews')}
+              className={`px-4 py-2 rounded-xl text-xs font-bold uppercase tracking-wider border transition-all ${
+                activeTab === 'reviews'
+                  ? 'bg-amber-950/40 border-amber-500/40 text-amber-300 shadow-lg shadow-amber-950/10'
+                  : 'bg-transparent border-transparent text-slate-400 hover:text-white'
+              }`}
+            >
+              Manage Reviews
+            </button>
+            <button
               onClick={() => setActiveTab('create')}
               className={`px-4 py-2 rounded-xl text-xs font-bold uppercase tracking-wider border transition-all flex items-center space-x-1.5 ${
                 activeTab === 'create'
@@ -766,6 +900,16 @@ export default function AdminPortal({ onClose }: AdminPortalProps) {
                   </button>
                 ))}
               </div>
+
+              {/* CSV Export Button */}
+              <button
+                onClick={handleExportCSV}
+                className="px-4 py-2.5 rounded-xl bg-green-950/40 hover:bg-green-900/60 border border-green-500/30 hover:border-green-500/40 text-green-350 text-[10px] font-mono font-bold uppercase tracking-wider flex items-center justify-center space-x-1.5 transition-all active:scale-95 whitespace-nowrap ml-auto"
+                title="Export Filtered List to Excel CSV format"
+              >
+                <Download className="w-3.5 h-3.5" />
+                <span>Export CSV</span>
+              </button>
             </div>
 
             {/* Error view */}
@@ -1146,6 +1290,193 @@ export default function AdminPortal({ onClose }: AdminPortalProps) {
               </div>
 
             </form>
+          </div>
+        )}
+
+        {/* Tab 3: Manage Reviews */}
+        {activeTab === 'reviews' && (
+          <div className="space-y-6" id="admin-reviews-tab">
+            {/* Control Panel: Filters & Search */}
+            <div className="bg-slate-900 border border-slate-800 rounded-2xl p-4 flex flex-col md:flex-row items-stretch md:items-center gap-4">
+              <div className="relative flex-1">
+                <Search className="w-4 h-4 text-slate-500 absolute left-3.5 top-1/2 -translate-y-1/2" />
+                <input
+                  type="text"
+                  value={reviewSearchTerm}
+                  onChange={(e) => setReviewSearchTerm(e.target.value)}
+                  className="w-full bg-slate-950 border border-slate-800 rounded-xl pl-10 pr-4 py-2.5 text-xs text-slate-250 focus:outline-none focus:border-purple-500/80 transition-colors"
+                  placeholder="Search reviews by Author, Title, Content or Company..."
+                />
+              </div>
+
+              <div className="flex flex-wrap items-center gap-2">
+                <span className="text-[10px] font-mono uppercase tracking-wider text-slate-500 mr-1 flex items-center">
+                  <Filter className="w-3 h-3 mr-1" /> Status:
+                </span>
+                {(['all', 'pending', 'approved'] as const).map((st) => (
+                  <button
+                    key={st}
+                    onClick={() => setReviewStatusFilter(st)}
+                    className={`px-3 py-1.5 rounded-lg text-[10px] font-bold uppercase tracking-wider border transition-all ${
+                      reviewStatusFilter === st
+                        ? 'bg-amber-950/40 border-amber-500/40 text-amber-300'
+                        : 'bg-slate-950 border-slate-850 text-slate-400 hover:text-white'
+                    }`}
+                  >
+                    {st === 'pending' ? 'Awaiting Approval' : st === 'approved' ? 'Approved' : 'All Reviews'}
+                  </button>
+                ))}
+              </div>
+            </div>
+
+            {loadingReviews ? (
+              <div className="flex flex-col items-center justify-center py-20 space-y-3 bg-slate-900/40 border border-slate-800 rounded-2xl">
+                <Loader2 className="w-8 h-8 text-amber-400 animate-spin" />
+                <p className="text-xs font-mono text-slate-400 uppercase tracking-widest">LOADING CUSTOMER ADVOCACY RECORDS...</p>
+              </div>
+            ) : reviews.length === 0 ? (
+              <div className="text-center py-16 bg-slate-900/40 border border-slate-800 rounded-2xl">
+                <MessageSquare className="w-10 h-10 mx-auto text-slate-600 mb-3" />
+                <h3 className="text-sm font-bold text-slate-300">No Reviews Logged</h3>
+                <p className="text-xs text-slate-500 mt-1 max-w-md mx-auto">
+                  When visitors submit reviews via the public Feedback page, they will show up here for you to verify, approve, reply, or pin!
+                </p>
+              </div>
+            ) : (
+              <div className="grid grid-cols-1 md:grid-cols-2 gap-6">
+                {reviews
+                  .filter((r) => {
+                    const matchesSearch = 
+                      r.name.toLowerCase().includes(reviewSearchTerm.toLowerCase()) ||
+                      r.title.toLowerCase().includes(reviewSearchTerm.toLowerCase()) ||
+                      r.review.toLowerCase().includes(reviewSearchTerm.toLowerCase()) ||
+                      (r.company && r.company.toLowerCase().includes(reviewSearchTerm.toLowerCase()));
+                    const matchesFilter = 
+                      reviewStatusFilter === 'all' ||
+                      (reviewStatusFilter === 'pending' && !r.approved) ||
+                      (reviewStatusFilter === 'approved' && r.approved);
+                    return matchesSearch && matchesFilter;
+                  })
+                  .map((item) => (
+                    <div 
+                      key={item.id}
+                      className={`bg-slate-900/60 border rounded-3xl p-6 flex flex-col justify-between transition-all ${
+                        item.approved 
+                          ? 'border-slate-800' 
+                          : 'border-amber-500/30 bg-amber-950/5'
+                      }`}
+                    >
+                      <div className="space-y-4 flex-1">
+                        {/* Status badges & info */}
+                        <div className="flex items-center justify-between">
+                          <span className="font-mono text-[9px] text-slate-500 uppercase">
+                            ID: {item.id} • {new Date(item.createdAt).toLocaleDateString()}
+                          </span>
+
+                          <div className="flex items-center space-x-2">
+                            {item.pinned && (
+                              <span className="bg-cyan-950/85 border border-cyan-750/30 text-[9px] font-mono text-cyan-400 px-2 py-0.5 rounded-lg">
+                                PINNED
+                              </span>
+                            )}
+                            <span className={`text-[9px] font-mono px-2.5 py-0.5 rounded-lg border uppercase ${
+                              item.approved 
+                                ? 'bg-green-950/40 border-green-900/40 text-green-400' 
+                                : 'bg-amber-950/40 border-amber-900/40 text-amber-400 animate-pulse'
+                            }`}>
+                              {item.approved ? 'Approved' : 'Pending Approval'}
+                            </span>
+                          </div>
+                        </div>
+
+                        {/* Stars and Title */}
+                        <div>
+                          <div className="flex items-center space-x-1 mb-1.5">
+                            {Array.from({ length: 5 }).map((_, i) => (
+                              <Star 
+                                key={i} 
+                                className={`w-3.5 h-3.5 ${
+                                  i < item.rating ? 'fill-yellow-400 text-yellow-400' : 'text-slate-700'
+                                }`} 
+                              />
+                            ))}
+                          </div>
+                          <h4 className="text-sm font-bold text-slate-100">{item.title}</h4>
+                          <p className="text-xs text-slate-350 leading-relaxed italic mt-2">
+                            "{item.review}"
+                          </p>
+                        </div>
+
+                        {/* Author info with avatar */}
+                        <div className="flex items-center space-x-3 bg-slate-950/40 p-3 rounded-2xl border border-slate-850/60">
+                          <div className="w-9 h-9 rounded-full bg-slate-900 border border-slate-800 overflow-hidden flex items-center justify-center shrink-0">
+                            {item.image ? (
+                              <img src={item.image} alt={item.name} className="w-full h-full object-cover animate-fade-in" referrerPolicy="no-referrer" />
+                            ) : (
+                              <span className="text-xs font-mono font-bold text-cyan-400">
+                                {item.name.charAt(0).toUpperCase()}
+                              </span>
+                            )}
+                          </div>
+                          <div className="min-w-0 flex-1">
+                            <span className="text-xs font-bold text-slate-200 block truncate">{item.name}</span>
+                            <span className="text-[10px] text-slate-500 font-mono block truncate">
+                              {item.company || 'Private Client'} • {item.country}
+                            </span>
+                          </div>
+                        </div>
+
+                        {/* Admin Reply Section */}
+                        <div className="space-y-1.5 bg-slate-950/60 p-3 rounded-2xl border border-slate-850/60">
+                          <span className="text-[9px] font-mono text-slate-400 uppercase tracking-wider block">Admin Reply:</span>
+                          <textarea
+                            defaultValue={item.reply || ''}
+                            onBlur={(e) => handleUpdateReviewField(item.id, 'reply', e.target.value)}
+                            placeholder="Type a public professional response here... (Press Tab or click away to save reply)"
+                            rows={2}
+                            className="w-full bg-slate-950 border border-slate-850 rounded-xl p-2.5 text-xs text-slate-300 focus:outline-none focus:border-cyan-500 font-mono leading-relaxed"
+                          />
+                        </div>
+                      </div>
+
+                      {/* Administrative actions */}
+                      <div className="flex items-center justify-between border-t border-slate-850/60 pt-4 mt-5">
+                        <button
+                          onClick={() => handleDeleteReview(item.id)}
+                          className="px-3 py-1.5 bg-red-950/20 hover:bg-red-950/40 border border-red-900/30 text-red-400 text-[10px] font-bold uppercase rounded-lg transition-all"
+                        >
+                          Delete Permanent
+                        </button>
+
+                        <div className="flex items-center space-x-2">
+                          <button
+                            onClick={() => handleUpdateReviewField(item.id, 'pinned', !item.pinned)}
+                            className={`px-3 py-1.5 border text-[10px] font-bold uppercase rounded-lg transition-all ${
+                              item.pinned 
+                                ? 'bg-cyan-950/40 border-cyan-900/40 text-cyan-400' 
+                                : 'bg-slate-950 border-slate-850 text-slate-400 hover:text-white'
+                            }`}
+                          >
+                            {item.pinned ? 'Unpin' : 'Pin Review'}
+                          </button>
+
+                          <button
+                            onClick={() => handleUpdateReviewField(item.id, 'approved', !item.approved)}
+                            className={`px-3.5 py-1.5 border text-[10px] font-bold uppercase rounded-lg transition-all ${
+                              item.approved 
+                                ? 'bg-amber-950/40 border-amber-900/40 text-amber-400' 
+                                : 'bg-green-950 border-green-900/40 text-green-400 hover:bg-green-900 hover:text-white'
+                            }`}
+                          >
+                            {item.approved ? 'Reject/Hide' : 'Approve & Publish'}
+                          </button>
+                        </div>
+                      </div>
+
+                    </div>
+                  ))}
+              </div>
+            )}
           </div>
         )}
       </main>

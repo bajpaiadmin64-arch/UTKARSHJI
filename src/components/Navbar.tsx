@@ -2,13 +2,16 @@ import React, { useState, useEffect } from 'react';
 import { Menu, X, Sparkles, Terminal, User, LogOut, ShieldCheck } from 'lucide-react';
 import { useAuth } from '../context/AuthContext';
 
+const logoImg = "/src/assets/images/ub_logo_1783522166217.jpg";
+
 interface NavbarProps {
   onOpenAI: () => void;
   onOpenAuth: () => void;
   onOpenAdmin?: () => void;
+  onOpenReviews?: () => void;
 }
 
-export default function Navbar({ onOpenAI, onOpenAuth, onOpenAdmin }: NavbarProps) {
+export default function Navbar({ onOpenAI, onOpenAuth, onOpenAdmin, onOpenReviews }: NavbarProps) {
   const [isOpen, setIsOpen] = useState(false);
   const [scrolled, setScrolled] = useState(false);
   const { currentUser, userProfile, logout, isAdmin } = useAuth();
@@ -26,14 +29,15 @@ export default function Navbar({ onOpenAI, onOpenAuth, onOpenAdmin }: NavbarProp
   }, []);
 
   const navLinks = [
-    { name: 'Home', href: '#home' },
-    { name: 'About', href: '#about' },
-    { name: 'Services', href: '#services' },
-    { name: 'Portfolio', href: '#portfolio' },
-    { name: 'Order Now', href: '#order' },
-    { name: 'Payment', href: '#payment' },
-    { name: 'FAQ', href: '#faq' },
-    { name: 'Contact', href: '#contact' },
+    { name: 'Home', href: '#home', onClick: null },
+    { name: 'About', href: '#about', onClick: null },
+    { name: 'Services', href: '#services', onClick: null },
+    { name: 'Portfolio', href: '#portfolio', onClick: null },
+    { name: 'Order Now', href: '#order', onClick: null },
+    { name: 'Payment', href: '#payment', onClick: null },
+    { name: 'Feedback Hub', href: null, onClick: onOpenReviews },
+    { name: 'FAQ', href: '#faq', onClick: null },
+    { name: 'Contact', href: '#contact', onClick: null },
   ];
 
   return (
@@ -49,9 +53,14 @@ export default function Navbar({ onOpenAI, onOpenAuth, onOpenAdmin }: NavbarProp
         <div className="flex items-center justify-between">
           {/* Logo */}
           <a href="#home" className="flex items-center space-x-3 group" id="logo-link">
-            <div className="relative flex items-center justify-center w-10 h-10 rounded-xl bg-gradient-to-tr from-cyan-500 to-purple-600 shadow-lg shadow-cyan-500/20 group-hover:scale-105 transition-transform duration-300">
-              <Terminal className="w-5 h-5 text-white" />
-              <div className="absolute inset-0 rounded-xl bg-gradient-to-tr from-cyan-500 to-purple-600 blur opacity-40 group-hover:opacity-70 transition-opacity duration-300"></div>
+            <div className="relative flex items-center justify-center w-10 h-10 rounded-xl bg-slate-900 border border-slate-800 shadow-lg group-hover:scale-105 transition-transform duration-300 overflow-hidden">
+              <img 
+                src={logoImg} 
+                alt="U B Web Developer Logo" 
+                className="w-full h-full object-cover"
+                referrerPolicy="no-referrer"
+              />
+              <div className="absolute inset-0 rounded-xl bg-gradient-to-tr from-cyan-500/20 to-purple-600/20 opacity-0 group-hover:opacity-100 transition-opacity duration-300"></div>
             </div>
             <div>
               <span className="text-xl font-bold text-white tracking-tight block">
@@ -65,15 +74,28 @@ export default function Navbar({ onOpenAI, onOpenAuth, onOpenAdmin }: NavbarProp
 
           {/* Desktop Nav */}
           <div className="hidden lg:flex items-center space-x-1" id="desktop-menu">
-            {navLinks.map((link) => (
-              <a
-                key={link.name}
-                href={link.href}
-                className="px-3 py-2 rounded-lg text-sm font-medium text-slate-300 hover:text-white hover:bg-slate-900/40 transition-all duration-200"
-              >
-                {link.name}
-              </a>
-            ))}
+            {navLinks.map((link) => {
+              if (link.onClick) {
+                return (
+                  <button
+                    key={link.name}
+                    onClick={link.onClick}
+                    className="px-3 py-2 rounded-lg text-sm font-medium text-slate-300 hover:text-white hover:bg-slate-900/40 transition-all duration-200 cursor-pointer"
+                  >
+                    {link.name}
+                  </button>
+                );
+              }
+              return (
+                <a
+                  key={link.name}
+                  href={link.href || '#'}
+                  className="px-3 py-2 rounded-lg text-sm font-medium text-slate-300 hover:text-white hover:bg-slate-900/40 transition-all duration-200"
+                >
+                  {link.name}
+                </a>
+              );
+            })}
 
             {/* AI Consultant */}
             <button
@@ -168,16 +190,32 @@ export default function Navbar({ onOpenAI, onOpenAuth, onOpenAdmin }: NavbarProp
         </div>
 
         <div className="mt-6 flex flex-col space-y-2">
-          {navLinks.map((link) => (
-            <a
-              key={link.name}
-              href={link.href}
-              onClick={() => setIsOpen(false)}
-              className="px-4 py-3 rounded-xl text-base font-medium text-slate-300 hover:text-white hover:bg-slate-900/60 transition-colors"
-            >
-              {link.name}
-            </a>
-          ))}
+          {navLinks.map((link) => {
+            if (link.onClick) {
+              return (
+                <button
+                  key={link.name}
+                  onClick={() => {
+                    setIsOpen(false);
+                    link.onClick();
+                  }}
+                  className="w-full text-left px-4 py-3 rounded-xl text-base font-medium text-slate-300 hover:text-white hover:bg-slate-900/60 transition-colors cursor-pointer"
+                >
+                  {link.name}
+                </button>
+              );
+            }
+            return (
+              <a
+                key={link.name}
+                href={link.href || '#'}
+                onClick={() => setIsOpen(false)}
+                className="px-4 py-3 rounded-xl text-base font-medium text-slate-300 hover:text-white hover:bg-slate-900/60 transition-colors"
+              >
+                {link.name}
+              </a>
+            );
+          })}
 
           {/* Mobile Auth options */}
           <div className="pt-6 border-t border-slate-900 mt-4 space-y-3">

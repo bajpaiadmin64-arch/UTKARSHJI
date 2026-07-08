@@ -19,18 +19,46 @@
       "type": "object",
       "properties": {
         "id": { "type": "string", "description": "The unique uppercase ID of the order." },
-        "userId": { "type": "string", "description": "The reference Auth UID of the ordering client." },
-        "serviceType": { "type": "string", "description": "The selected package or capability service name." },
-        "requirements": { "type": "string", "description": "Detailed client functional and visual requirements." },
-        "additionalNotes": { "type": "string", "description": "Optional custom messages or transaction logs." },
-        "budget": { "type": "string", "description": "Budget constraints or specific service price." },
-        "timeline": { "type": "string", "description": "Desired delivery timeline." },
-        "status": { "type": "string", "enum": ["pending", "in_progress", "completed", "cancelled", "confirmed"], "description": "Overall status of the order workflow." },
-        "paymentStatus": { "type": "string", "enum": ["unpaid", "pending_verification", "paid"], "description": "The processing status of the transaction payment." },
-        "transactionId": { "type": "string", "description": "The transaction ID submitted by the user." },
+        "fullName": { "type": "string", "description": "Full name of the client." },
+        "companyName": { "type": "string", "description": "Optional business name." },
+        "email": { "type": "string", "format": "email", "description": "Client's email address." },
+        "phone": { "type": "string", "description": "Client's mobile number." },
+        "whatsApp": { "type": "string", "description": "Client's WhatsApp number." },
+        "serviceRequired": { "type": "string", "description": "The requested service category." },
+        "budget": { "type": "string", "description": "Budget constraints." },
+        "deadline": { "type": "string", "description": "Timeline constraints." },
+        "projectDescription": { "type": "string", "description": "Detailed description of the project." },
+        "referenceUrl": { "type": "string", "description": "Optional reference website URL." },
+        "fileName": { "type": "string", "description": "Uploaded attachment file name." },
+        "fileData": { "type": "string", "description": "Base64 payload or URL of the attachment." },
+        "status": { "type": "string", "enum": ["pending", "in_progress", "completed", "cancelled", "confirmed"], "description": "Overall status of the order." },
+        "paymentStatus": { "type": "string", "enum": ["unpaid", "pending_verification", "paid"], "description": "Payment status of the order." },
+        "transactionId": { "type": "string", "description": "The transaction ID or UTR number." },
+        "unread": { "type": "boolean", "description": "Whether the admin has read this order." },
         "createdAt": { "type": "string", "format": "date-time", "description": "Timestamp when the order was submitted." }
       },
-      "required": ["id", "userId", "serviceType", "requirements", "status", "createdAt"]
+      "required": ["id", "fullName", "email", "phone", "serviceRequired", "projectDescription", "status", "createdAt"]
+    },
+    "Review": {
+      "title": "Review",
+      "description": "A feedback review written by a client.",
+      "type": "object",
+      "properties": {
+        "id": { "type": "string", "description": "The unique review document ID." },
+        "name": { "type": "string", "description": "Full name of the reviewer." },
+        "company": { "type": "string", "description": "Optional business/company name." },
+        "rating": { "type": "integer", "minimum": 1, "maximum": 5, "description": "Rating score from 1 to 5 stars." },
+        "title": { "type": "string", "description": "Review title." },
+        "review": { "type": "string", "description": "Detailed review text." },
+        "image": { "type": "string", "description": "Optional base64 profile photo." },
+        "country": { "type": "string", "description": "Country of the reviewer." },
+        "approved": { "type": "boolean", "description": "Review approved by Administrator." },
+        "hidden": { "type": "boolean", "description": "Review hidden by Administrator." },
+        "pinned": { "type": "boolean", "description": "Review pinned to the top of the feed." },
+        "reply": { "type": "string", "description": "Optional Admin response message." },
+        "createdAt": { "type": "string", "format": "date-time", "description": "Timestamp when the review was written." }
+      },
+      "required": ["id", "name", "rating", "title", "review", "country", "approved", "createdAt"]
     }
   },
   "firestore": {
@@ -41,6 +69,10 @@
     "orders/{orderId}": {
       "schema": "Order",
       "description": "Client orders indexable by system-assigned order codes."
+    },
+    "reviews/{reviewId}": {
+      "schema": "Review",
+      "description": "Customer feedback and ratings collection."
     }
   }
 }

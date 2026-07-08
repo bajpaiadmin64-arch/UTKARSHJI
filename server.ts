@@ -5,11 +5,21 @@ import crypto from "crypto";
 import { createServer as createViteServer } from "vite";
 import { GoogleGenAI } from "@google/genai";
 import dotenv from "dotenv";
+import { Firestore } from "@google-cloud/firestore";
 
 dotenv.config();
 
 const app = express();
 const PORT = 3000;
+
+// Initialize Firebase
+const firebaseConfig = JSON.parse(
+  fs.readFileSync(path.join(process.cwd(), "firebase-applet-config.json"), "utf-8")
+);
+const firestoreDb = new Firestore({
+  projectId: firebaseConfig.projectId,
+  databaseId: firebaseConfig.firestoreDatabaseId,
+});
 
 // Set up JSON body parsers with generous limits for file uploads (base64)
 app.use(express.json({ limit: "50mb" }));
@@ -38,6 +48,182 @@ function writeDatabase(data: any) {
     fs.writeFileSync(DB_FILE, JSON.stringify(data, null, 2));
   } catch (err) {
     console.error("Error writing database:", err);
+  }
+}
+
+// ==================== ROBUST FIRESTORE + LOCAL DB FALLBACK WRAPPERS ====================
+
+// 1. ORDERS HELPERS
+async function getOrdersHelper(): Promise<any[]> {
+  try {
+    const ordersSnapshot = await firestoreDb.collection("orders").get();
+    const allOrders: any[] = [];
+    ordersSnapshot.forEach(docSnap => {
+      allOrders.push(docSnap.data());
+    });
+    return allOrders;
+  } catch (error) {
+    console.warn("Firestore error in getOrdersHelper (falling back to local JSON database):", error);
+    const db = readDatabase();
+    return db.orders || [];
+  }
+}
+
+async function saveOrderHelper(orderId: string, order: any): Promise<void> {
+  try {
+    await firestoreDb.collection("orders").doc(orderId).set(order);
+  } catch (error) {
+    console.warn("Firestore error in saveOrderHelper (falling back to local JSON database):", error);
+    const db = readDatabase();
+    const existingIndex = db.orders.findIndex((o: any) => o.id === orderId);
+    if (existingIndex !== -1) {
+      db.orders[existingIndex] = order;
+    } else {
+      db.orders.push(order);
+    }
+    writeDatabase(db);
+  }
+}
+
+async function updateOrderHelper(orderId: string, fields: any): Promise<any> {
+  try {
+    const orderRef = firestoreDb.collection("orders").doc(orderId);
+    await orderRef.update(fields);
+    const updatedSnap = await orderRef.get();
+    return updatedSnap.data();
+  } catch (error) {
+    console.warn("Firestore error in updateOrderHelper (falling back to local JSON database):", error);
+    const db = readDatabase();
+    const existingIndex = db.orders.findIndex((o: any) => o.id === orderId);
+    if (existingIndex !== -1) {
+      db.orders[existingIndex] = { ...db.orders[existingIndex], ...fields };
+      writeDatabase(db);
+      return db.orders[existingIndex];
+    }
+    throw new Error("Order not found in local database.");
+  }
+}
+
+async function setOrderHelper(orderId: string, order: any): Promise<void> {
+  try {
+    await firestoreDb.collection("orders").doc(orderId).set(order);
+  } catch (error) {
+    console.warn("Firestore error in setOrderHelper (falling back to local JSON database):", error);
+    const db = readDatabase();
+    const existingIndex = db.orders.findIndex((o: any) => o.id === orderId);
+    if (existingIndex !== -1) {
+      db.orders[existingIndex] = order;
+    } else {
+      db.orders.push(order);
+    }
+    writeDatabase(db);
+  }
+}
+
+async function deleteOrderHelper(orderId: string): Promise<void> {
+  try {
+    await firestoreDb.collection("orders").doc(orderId).delete();
+  } catch (error) {
+    console.warn("Firestore error in deleteOrderHelper (falling back to local JSON database):", error);
+    const db = readDatabase();
+    db.orders = db.orders.filter((o: any) => o.id !== orderId);
+    writeDatabase(db);
+  }
+}
+
+async function getOrderHelper(orderId: string): Promise<any | null> {
+  try {
+    const orderSnap = await firestoreDb.collection("orders").doc(orderId).get();
+    if (orderSnap.exists) {
+      return orderSnap.data() || null;
+    }
+    return null;
+  } catch (error) {
+    console.warn("Firestore error in getOrderHelper (falling back to local JSON database):", error);
+    const db = readDatabase();
+    const order = db.orders.find((o: any) => o.id === orderId);
+    return order || null;
+  }
+}
+
+// 2. REVIEWS HELPERS
+const REVIEWS_FILE = path.join(process.cwd(), "reviews_db.json");
+
+function readReviewsDatabase() {
+  try {
+    if (!fs.existsSync(REVIEWS_FILE)) {
+      fs.writeFileSync(REVIEWS_FILE, JSON.stringify({ reviews: [] }, null, 2));
+    }
+    const data = fs.readFileSync(REVIEWS_FILE, "utf-8");
+    return JSON.parse(data);
+  } catch (err) {
+    console.error("Error reading reviews database:", err);
+    return { reviews: [] };
+  }
+}
+
+function writeReviewsDatabase(data: any) {
+  try {
+    fs.writeFileSync(REVIEWS_FILE, JSON.stringify(data, null, 2));
+  } catch (err) {
+    console.error("Error writing reviews database:", err);
+  }
+}
+
+async function getReviewsHelper(): Promise<any[]> {
+  try {
+    const reviewsSnapshot = await firestoreDb.collection("reviews").get();
+    const reviewsList: any[] = [];
+    reviewsSnapshot.forEach((docSnap) => {
+      reviewsList.push(docSnap.data());
+    });
+    return reviewsList;
+  } catch (error) {
+    console.warn("Firestore error in getReviewsHelper (falling back to local JSON database):", error);
+    const db = readReviewsDatabase();
+    return db.reviews || [];
+  }
+}
+
+async function setReviewHelper(reviewId: string, review: any): Promise<void> {
+  try {
+    await firestoreDb.collection("reviews").doc(reviewId).set(review);
+  } catch (error) {
+    console.warn("Firestore error in setReviewHelper (falling back to local JSON database):", error);
+    const db = readReviewsDatabase();
+    const existingIndex = db.reviews.findIndex((r: any) => r.id === reviewId);
+    if (existingIndex !== -1) {
+      db.reviews[existingIndex] = review;
+    } else {
+      db.reviews.push(review);
+    }
+    writeReviewsDatabase(db);
+  }
+}
+
+async function deleteReviewHelper(reviewId: string): Promise<void> {
+  try {
+    await firestoreDb.collection("reviews").doc(reviewId).delete();
+  } catch (error) {
+    console.warn("Firestore error in deleteReviewHelper (falling back to local JSON database):", error);
+    const db = readReviewsDatabase();
+    db.reviews = db.reviews.filter((r: any) => r.id !== reviewId);
+    writeReviewsDatabase(db);
+  }
+}
+
+async function getReviewHelper(reviewId: string): Promise<any | null> {
+  try {
+    const reviewSnap = await firestoreDb.collection("reviews").doc(reviewId).get();
+    if (reviewSnap.exists) {
+      return reviewSnap.data() || null;
+    }
+    return null;
+  } catch (error) {
+    console.warn("Firestore error in getReviewHelper (falling back to local JSON database):", error);
+    const db = readReviewsDatabase();
+    const review = db.reviews.find((r: any) => r.id === reviewId);
+    return review || null;
   }
 }
 
@@ -312,7 +498,7 @@ app.get("/api/auth/me", (req, res) => {
 });
 
 // 4. Submit a new order (Securely binds to logged-in user)
-app.post("/api/orders", (req, res) => {
+app.post("/api/orders", async (req, res) => {
   try {
     const {
       fullName,
@@ -324,9 +510,9 @@ app.post("/api/orders", (req, res) => {
       budget,
       deadline,
       projectDescription,
+      referenceUrl,
       fileName,
       fileData,
-      additionalNotes,
       userId
     } = req.body;
 
@@ -334,8 +520,14 @@ app.post("/api/orders", (req, res) => {
       return res.status(400).json({ error: "Please fill in all required fields." });
     }
 
+    // Generate beautiful sequential Order ID using Firestore count
+    const allOrders = await getOrdersHelper();
+    const orderCount = allOrders.length;
+    const currentYear = new Date().getFullYear();
+    const orderId = `UB-${currentYear}-${String(orderCount + 1).padStart(5, "0")}`;
+
     const newOrder = {
-      id: "UB-" + Math.floor(100000 + Math.random() * 900000),
+      id: orderId,
       userId: userId || "guest",
       fullName,
       companyName: companyName || "",
@@ -346,41 +538,41 @@ app.post("/api/orders", (req, res) => {
       budget: budget || "Flexible",
       deadline: deadline || "Flexible",
       projectDescription,
+      referenceUrl: referenceUrl || "",
       fileName: fileName || null,
-      fileData: fileData ? `[Base64 Payload: ${fileData.length} characters]` : null, // Store confirmation but avoid bloating log heavily
-      fileDataPayload: fileData || null, // actual base64
-      additionalNotes: additionalNotes || "",
+      fileData: fileData || null, // store the actual base64 file
       status: "pending",
       paymentStatus: "unpaid",
+      unread: true,
       createdAt: new Date().toISOString(),
     };
 
-    const db = readDatabase();
-    db.orders.push(newOrder);
-    writeDatabase(db);
+    // Save permanently in Firestore
+    await saveOrderHelper(orderId, newOrder);
 
     // Secure File Upload Logging
     if (fileName) {
-      console.log(`[SECURE UPLOAD] File successfully received and stored: ${fileName} (${Math.round((fileData?.length || 0) * 0.75 / 1024)} KB)`);
+      console.log(`[SECURE UPLOAD] File successfully received and stored in Firestore: ${fileName} (${Math.round((fileData?.length || 0) * 0.75 / 1024)} KB)`);
     }
 
-    // Simulate Email Delivery to utkarshbajpai025@gmail.com
+    // Simulate Email Delivery to bajpaiadmin64@gmail.com as requested
     console.log(`
 ========================================================================
-[EMAIL SENT TO utkarshbajpai025@gmail.com]
-Subject: NEW PROJECT ORDER SUBMISSION - Order ID: ${newOrder.id}
+[EMAIL SENT TO bajpaiadmin64@gmail.com]
+Subject: NEW WEBSITE INQUIRY RECEIVED - Order ID: ${newOrder.id}
 Client: ${fullName} (${email})
 Phone: ${phone} | WhatsApp: ${whatsApp}
-Service: ${serviceRequired}
-Budget: ${budget} | Deadline: ${deadline}
+Service Required: ${serviceRequired}
+Budget: ${budget} | Timeline: ${deadline}
 Description: ${projectDescription}
+Reference URL: ${referenceUrl || "None"}
 Attached File: ${fileName || "None"}
 ========================================================================
     `);
 
     // Clean payload for client response
     const clientResponse = { ...newOrder };
-    delete clientResponse.fileDataPayload;
+    delete clientResponse.fileData;
 
     return res.status(201).json({
       success: true,
@@ -388,13 +580,13 @@ Attached File: ${fileName || "None"}
       order: clientResponse,
     });
   } catch (error: any) {
-    console.error("Error creating order:", error);
+    console.error("Error creating order in Firestore:", error);
     return res.status(500).json({ error: "Internal Server Error during order creation." });
   }
 });
 
 // 5. Confirm payment for an order
-app.post("/api/confirm-payment", (req, res) => {
+app.post("/api/confirm-payment", async (req, res) => {
   try {
     const { orderId, transactionId, utrNumber, clientNotes } = req.body;
 
@@ -402,29 +594,28 @@ app.post("/api/confirm-payment", (req, res) => {
       return res.status(400).json({ error: "Order ID and Transaction Reference/UTR Number are required." });
     }
 
-    const db = readDatabase();
-    const orderIndex = db.orders.findIndex((o: any) => o.id === orderId || o.id.toLowerCase() === orderId.toLowerCase());
+    const docId = orderId.toUpperCase();
+    const orderData = await getOrderHelper(docId);
 
-    if (orderIndex === -1) {
+    if (!orderData) {
       return res.status(404).json({ error: "Order not found. Please double-check your Order ID." });
     }
 
-    const order = db.orders[orderIndex];
-    order.paymentStatus = "pending_verification";
-    order.transactionId = transactionId || utrNumber;
-    order.status = "confirmed";
-    if (clientNotes) {
-      order.additionalNotes = (order.additionalNotes || "") + "\n[Payment Confirmation Notes]: " + clientNotes;
-    }
+    const updatedNotes = (orderData.additionalNotes || "") + (clientNotes ? `\n[Payment Confirmation Notes]: ${clientNotes}` : "");
+    
+    await updateOrderHelper(docId, {
+      paymentStatus: "pending_verification",
+      transactionId: transactionId || utrNumber,
+      status: "confirmed",
+      additionalNotes: updatedNotes
+    });
 
-    writeDatabase(db);
-
-    // Simulate Email notification for payment
+    // Simulate Email notification for payment to bajpaiadmin64@gmail.com
     console.log(`
 ========================================================================
-[EMAIL SENT TO utkarshbajpai025@gmail.com]
-Subject: PAYMENT INCOMING VERIFICATION - Order ID: ${order.id}
-Client: ${order.fullName}
+[EMAIL SENT TO bajpaiadmin64@gmail.com]
+Subject: PAYMENT INCOMING VERIFICATION - Order ID: ${orderData.id}
+Client: ${orderData.fullName}
 Transaction Ref/UTR: ${transactionId || utrNumber}
 Payment Status: pending_verification
 ========================================================================
@@ -433,16 +624,22 @@ Payment Status: pending_verification
     return res.json({
       success: true,
       message: "Payment details submitted successfully! Your order is now being processed.",
-      order,
+      order: {
+        ...orderData,
+        paymentStatus: "pending_verification",
+        transactionId: transactionId || utrNumber,
+        status: "confirmed",
+        additionalNotes: updatedNotes
+      }
     });
   } catch (error) {
-    console.error("Error confirming payment:", error);
+    console.error("Error confirming payment in Firestore:", error);
     return res.status(500).json({ error: "Internal Server Error during payment confirmation." });
   }
 });
 
 // 6. Client endpoint to securely fetch their own orders
-app.get("/api/my-orders", (req, res) => {
+app.get("/api/my-orders", async (req, res) => {
   try {
     const authHeader = req.headers.authorization;
     if (!authHeader || !authHeader.startsWith("Bearer ")) {
@@ -456,11 +653,19 @@ app.get("/api/my-orders", (req, res) => {
       return res.status(401).json({ error: "Session expired. Please log in again." });
     }
 
-    const db = readDatabase();
-    const userOrders = db.orders.filter((o: any) => o.userId === decoded.uid || o.email?.toLowerCase() === decoded.email.toLowerCase());
-    
+    // Query Firestore orders (with fallback to local db)
+    const allOrders = await getOrdersHelper();
+    const matchedOrders: any[] = [];
+    allOrders.forEach(data => {
+      if (data.userId === decoded.uid || data.email?.toLowerCase() === decoded.email.toLowerCase()) {
+        const orderCopy = { ...data };
+        delete orderCopy.fileData;
+        matchedOrders.push(orderCopy);
+      }
+    });
+
     // Sort by newest first
-    const sorted = [...userOrders].sort((a: any, b: any) => new Date(b.createdAt).getTime() - new Date(a.createdAt).getTime());
+    const sorted = [...matchedOrders].sort((a: any, b: any) => new Date(b.createdAt).getTime() - new Date(a.createdAt).getTime());
     return res.json({ success: true, orders: sorted });
   } catch (error) {
     console.error("Error fetching user orders:", error);
@@ -469,7 +674,7 @@ app.get("/api/my-orders", (req, res) => {
 });
 
 // 7. Secure Admin Endpoint: Retrieve ALL orders (Requires Verified System Administrator session)
-app.get("/api/orders", (req, res) => {
+app.get("/api/orders", async (req, res) => {
   try {
     const authHeader = req.headers.authorization;
     if (!authHeader || !authHeader.startsWith("Bearer ")) {
@@ -483,23 +688,26 @@ app.get("/api/orders", (req, res) => {
       return res.status(403).json({ error: "Access denied. Administrator privileges required." });
     }
 
-    const db = readDatabase();
-    // Sort orders by newest first
-    const ordersSorted = [...db.orders].sort((a: any, b: any) => new Date(b.createdAt).getTime() - new Date(a.createdAt).getTime());
-    // Strip file payloads to keep transfer lightweight
-    const strippedOrders = ordersSorted.map((o: any) => {
-      const copy = { ...o };
-      delete copy.fileDataPayload;
-      return copy;
+    const allOrders = await getOrdersHelper();
+    const ordersListClean: any[] = [];
+    allOrders.forEach(data => {
+      const orderCopy = { ...data };
+      // Strip base64 fileData payload to keep response lightweight
+      delete orderCopy.fileData;
+      ordersListClean.push(orderCopy);
     });
-    return res.json({ orders: strippedOrders });
+
+    // Sort orders by newest first
+    const ordersSorted = [...ordersListClean].sort((a: any, b: any) => new Date(b.createdAt).getTime() - new Date(a.createdAt).getTime());
+    return res.json({ orders: ordersSorted });
   } catch (error) {
+    console.error("Error retrieving admin orders:", error);
     return res.status(500).json({ error: "Failed to read orders list." });
   }
 });
 
 // 8. Secure Admin Endpoint: PATCH update an order (Requires Verified Admin session)
-app.patch("/api/orders/:id", (req, res) => {
+app.patch("/api/orders/:id", async (req, res) => {
   try {
     const authHeader = req.headers.authorization;
     if (!authHeader || !authHeader.startsWith("Bearer ")) {
@@ -513,22 +721,20 @@ app.patch("/api/orders/:id", (req, res) => {
       return res.status(403).json({ error: "Access denied. Administrator privileges required." });
     }
 
-    const orderId = req.params.id;
-    const db = readDatabase();
-    const orderIndex = db.orders.findIndex((o: any) => o.id === orderId);
+    const orderId = req.params.id.toUpperCase();
+    const currentData = await getOrderHelper(orderId);
 
-    if (orderIndex === -1) {
+    if (!currentData) {
       return res.status(404).json({ error: "Order not found." });
     }
 
-    // Merge the updated keys securely
-    db.orders[orderIndex] = {
-      ...db.orders[orderIndex],
+    const updatedData = {
+      ...currentData,
       ...req.body
     };
 
-    writeDatabase(db);
-    return res.json({ success: true, order: db.orders[orderIndex] });
+    await setOrderHelper(orderId, updatedData);
+    return res.json({ success: true, order: updatedData });
   } catch (error) {
     console.error("Error patching order:", error);
     return res.status(500).json({ error: "Internal Server Error during order update." });
@@ -536,7 +742,7 @@ app.patch("/api/orders/:id", (req, res) => {
 });
 
 // 9. Secure Admin Endpoint: DELETE an order (Requires Verified Admin session)
-app.delete("/api/orders/:id", (req, res) => {
+app.delete("/api/orders/:id", async (req, res) => {
   try {
     const authHeader = req.headers.authorization;
     if (!authHeader || !authHeader.startsWith("Bearer ")) {
@@ -550,20 +756,334 @@ app.delete("/api/orders/:id", (req, res) => {
       return res.status(403).json({ error: "Access denied. Administrator privileges required." });
     }
 
-    const orderId = req.params.id;
-    const db = readDatabase();
-    const filteredOrders = db.orders.filter((o: any) => o.id !== orderId);
+    const orderId = req.params.id.toUpperCase();
+    const orderData = await getOrderHelper(orderId);
 
-    if (filteredOrders.length === db.orders.length) {
+    if (!orderData) {
       return res.status(404).json({ error: "Order not found." });
     }
 
-    db.orders = filteredOrders;
-    writeDatabase(db);
+    await deleteOrderHelper(orderId);
     return res.json({ success: true, message: "Order deleted successfully." });
   } catch (error) {
     console.error("Error deleting order:", error);
     return res.status(500).json({ error: "Internal Server Error during order deletion." });
+  }
+});
+
+// ==================== ADMINISTRATIVE REVIEWS ENDPOINTS ====================
+
+// GET /api/admin/reviews - Fetch all reviews (approved & pending) for admin management
+app.get("/api/admin/reviews", async (req, res) => {
+  try {
+    const authHeader = req.headers.authorization;
+    if (!authHeader || !authHeader.startsWith("Bearer ")) {
+      return res.status(401).json({ error: "No session token found." });
+    }
+
+    const token = authHeader.split(" ")[1];
+    const decoded = verifyToken(token);
+
+    if (!decoded || decoded.email !== "bajpaiadmin64@gmail.com") {
+      return res.status(403).json({ error: "Access denied. Administrator privileges required." });
+    }
+
+    const reviewsList = await getReviewsHelper();
+
+    // Sort by newest first
+    const sorted = [...reviewsList].sort((a: any, b: any) => new Date(b.createdAt).getTime() - new Date(a.createdAt).getTime());
+
+    return res.json({ success: true, reviews: sorted });
+  } catch (error) {
+    console.error("Error retrieving admin reviews:", error);
+    return res.status(500).json({ error: "Failed to load reviews list." });
+  }
+});
+
+// PATCH /api/admin/reviews/:id - Update review specs (approved, hidden, pinned, reply)
+app.patch("/api/admin/reviews/:id", async (req, res) => {
+  try {
+    const authHeader = req.headers.authorization;
+    if (!authHeader || !authHeader.startsWith("Bearer ")) {
+      return res.status(401).json({ error: "No session token found." });
+    }
+
+    const token = authHeader.split(" ")[1];
+    const decoded = verifyToken(token);
+
+    if (!decoded || decoded.email !== "bajpaiadmin64@gmail.com") {
+      return res.status(403).json({ error: "Access denied. Administrator privileges required." });
+    }
+
+    const reviewId = req.params.id.toUpperCase();
+    const currentData = await getReviewHelper(reviewId);
+
+    if (!currentData) {
+      return res.status(404).json({ error: "Review not found." });
+    }
+
+    const updatedData = {
+      ...currentData,
+      ...req.body
+    };
+
+    await setReviewHelper(reviewId, updatedData);
+    return res.json({ success: true, review: updatedData });
+  } catch (error) {
+    console.error("Error patching review:", error);
+    return res.status(500).json({ error: "Internal Server Error during review update." });
+  }
+});
+
+// DELETE /api/admin/reviews/:id - Delete a review document
+app.delete("/api/admin/reviews/:id", async (req, res) => {
+  try {
+    const authHeader = req.headers.authorization;
+    if (!authHeader || !authHeader.startsWith("Bearer ")) {
+      return res.status(401).json({ error: "No session token found." });
+    }
+
+    const token = authHeader.split(" ")[1];
+    const decoded = verifyToken(token);
+
+    if (!decoded || decoded.email !== "bajpaiadmin64@gmail.com") {
+      return res.status(403).json({ error: "Access denied. Administrator privileges required." });
+    }
+
+    const reviewId = req.params.id.toUpperCase();
+    const currentData = await getReviewHelper(reviewId);
+
+    if (!currentData) {
+      return res.status(404).json({ error: "Review not found." });
+    }
+
+    await deleteReviewHelper(reviewId);
+    return res.json({ success: true, message: "Review deleted successfully." });
+  } catch (error) {
+    console.error("Error deleting review:", error);
+    return res.status(500).json({ error: "Internal Server Error during review deletion." });
+  }
+});
+
+// ==================== CUSTOMER REVIEWS ENDPOINTS ====================
+
+// GET /api/reviews - Fetch approved and visible reviews
+app.get("/api/reviews", async (req, res) => {
+  try {
+    const reviewsListAll = await getReviewsHelper();
+    const reviewsListApproved: any[] = [];
+    reviewsListAll.forEach((data) => {
+      if (data.approved === true && data.hidden !== true) {
+        reviewsListApproved.push(data);
+      }
+    });
+
+    // Sort by pinned first, then by createdAt descending
+    const sorted = [...reviewsListApproved].sort((a: any, b: any) => {
+      if (a.pinned && !b.pinned) return -1;
+      if (!a.pinned && b.pinned) return 1;
+      return new Date(b.createdAt).getTime() - new Date(a.createdAt).getTime();
+    });
+
+    return res.json({ success: true, reviews: sorted });
+  } catch (error) {
+    console.error("Error fetching reviews:", error);
+    return res.status(500).json({ error: "Failed to load reviews." });
+  }
+});
+
+// POST /api/reviews - Guest submission of reviews (Always goes to pending approval first)
+app.post("/api/reviews", async (req, res) => {
+  try {
+    const { name, company, rating, title, review, image, country } = req.body;
+
+    if (!name || !rating || !title || !review || !country) {
+      return res.status(400).json({ error: "Required fields are missing." });
+    }
+
+    const parsedRating = parseInt(rating, 10);
+    if (isNaN(parsedRating) || parsedRating < 1 || parsedRating > 5) {
+      return res.status(400).json({ error: "Rating must be a number between 1 and 5." });
+    }
+
+    const reviewId = "REV-" + crypto.randomUUID().slice(0, 8).toUpperCase();
+    const newReview = {
+      id: reviewId,
+      name,
+      company: company || "",
+      rating: parsedRating,
+      title,
+      review,
+      image: image || null,
+      country,
+      approved: false, // Must be approved by administrator
+      hidden: false,
+      pinned: false,
+      createdAt: new Date().toISOString()
+    };
+
+    await setReviewHelper(reviewId, newReview);
+
+    return res.status(201).json({
+      success: true,
+      message: "Thank you! Your review has been submitted for administrator approval.",
+      reviewId
+    });
+  } catch (error) {
+    console.error("Error creating review:", error);
+    return res.status(500).json({ error: "Internal Server Error during review submission." });
+  }
+});
+
+// ==================== FOUNDER PROFILE ENDPOINTS ====================
+
+const FOUNDER_FILE = path.join(process.cwd(), "founder_db.json");
+
+function readFounderDatabase() {
+  try {
+    if (!fs.existsSync(FOUNDER_FILE)) {
+      const defaultFounder = {
+        name: "Utkarsh Bajpai",
+        role: "Founder & Chief Architect",
+        instagram: "https://www.instagram.com/utkarsh____bajpai____?igsh=NHpyMXIwMmdkN3Fq",
+        github: "https://github.com/utkarshbajpai",
+        linkedin: "https://linkedin.com/in/utkarshbajpai",
+        bio: "U B Web Developer was built on a core philosophy: software should be incredibly elegant, mathematically precise, and designed strictly to solve human problems. Whether we are hand-crafting visual web frameworks or programming elite data automation pipes, our target is unmatched user experience and high business leverage.",
+        secondaryBio: "Under Utkarsh's leadership, our team has executed over 150 digital products spanning interactive client hubs, business portals, data analysis frameworks, and custom automation architectures for elite partners globally.",
+        imageUrl: "/src/assets/images/founder_headshot_1783524077102.jpg"
+      };
+      fs.writeFileSync(FOUNDER_FILE, JSON.stringify(defaultFounder, null, 2));
+      return defaultFounder;
+    }
+    const data = fs.readFileSync(FOUNDER_FILE, "utf-8");
+    return JSON.parse(data);
+  } catch (err) {
+    console.error("Error reading founder database:", err);
+    return {
+      name: "Utkarsh Bajpai",
+      role: "Founder & Chief Architect",
+      instagram: "https://www.instagram.com/utkarsh____bajpai____?igsh=NHpyMXIwMmdkN3Fq",
+      github: "https://github.com/utkarshbajpai",
+      linkedin: "https://linkedin.com/in/utkarshbajpai",
+      bio: "U B Web Developer was built on a core philosophy: software should be incredibly elegant, mathematically precise, and designed strictly to solve human problems. Whether we are hand-crafting visual web frameworks or programming elite data automation pipes, our target is unmatched user experience and high business leverage.",
+      secondaryBio: "Under Utkarsh's leadership, our team has executed over 150 digital products spanning interactive client hubs, business portals, data analysis frameworks, and custom automation architectures for elite partners globally.",
+      imageUrl: "/src/assets/images/founder_headshot_1783524077102.jpg"
+    };
+  }
+}
+
+function writeFounderDatabase(data: any) {
+  try {
+    fs.writeFileSync(FOUNDER_FILE, JSON.stringify(data, null, 2));
+  } catch (err) {
+    console.error("Error writing founder database:", err);
+  }
+}
+
+// GET /api/founder/image - Serves custom or default image
+app.get("/api/founder/image", (req, res) => {
+  try {
+    const founder = readFounderDatabase();
+    if (founder.customImageBase64) {
+      const matches = founder.customImageBase64.match(/^data:([A-Za-z-+\/]+);base64,(.+)$/);
+      if (matches && matches.length === 3) {
+        const contentType = matches[1];
+        const buffer = Buffer.from(matches[2], "base64");
+        res.setHeader("Content-Type", contentType);
+        res.setHeader("Cache-Control", "public, max-age=86400");
+        return res.send(buffer);
+      }
+    }
+    
+    const defaultImagePath = path.join(process.cwd(), "src/assets/images/founder_headshot_1783524077102.jpg");
+    if (fs.existsSync(defaultImagePath)) {
+      res.setHeader("Content-Type", "image/jpeg");
+      return res.sendFile(defaultImagePath);
+    } else {
+      return res.status(404).send("Image not found");
+    }
+  } catch (err) {
+    console.error("Error serving founder image:", err);
+    return res.status(500).send("Error serving founder image");
+  }
+});
+
+// GET /api/founder - Fetch founder metadata
+app.get("/api/founder", (req, res) => {
+  try {
+    const founder = readFounderDatabase();
+    const responseData = {
+      name: founder.name,
+      role: founder.role,
+      instagram: founder.instagram,
+      github: founder.github,
+      linkedin: founder.linkedin,
+      bio: founder.bio,
+      secondaryBio: founder.secondaryBio,
+      imageUrl: "/api/founder/image?v=" + (founder.updatedAt || "default")
+    };
+    return res.json(responseData);
+  } catch (err) {
+    console.error("Error fetching founder details:", err);
+    return res.status(500).json({ error: "Failed to fetch founder details" });
+  }
+});
+
+// POST /api/founder - Update founder metadata (Requires Administrator)
+app.post("/api/founder", (req, res) => {
+  try {
+    const authHeader = req.headers.authorization;
+    if (!authHeader || !authHeader.startsWith("Bearer ")) {
+      return res.status(401).json({ error: "No session token found." });
+    }
+
+    const token = authHeader.split(" ")[1];
+    const decoded = verifyToken(token);
+
+    if (!decoded || decoded.email !== "bajpaiadmin64@gmail.com") {
+      return res.status(403).json({ error: "Access denied. Administrator privileges required." });
+    }
+
+    const { name, role, instagram, github, linkedin, bio, secondaryBio, fileData } = req.body;
+
+    if (!name || !role) {
+      return res.status(400).json({ error: "Name and Role/Title are required." });
+    }
+
+    const dbFounder = readFounderDatabase();
+    
+    dbFounder.name = name;
+    dbFounder.role = role;
+    dbFounder.instagram = instagram || "";
+    dbFounder.github = github || "";
+    dbFounder.linkedin = linkedin || "";
+    dbFounder.bio = bio || "";
+    dbFounder.secondaryBio = secondaryBio || "";
+    dbFounder.updatedAt = Date.now().toString();
+
+    if (fileData) {
+      dbFounder.customImageBase64 = fileData;
+    }
+
+    writeFounderDatabase(dbFounder);
+
+    return res.json({
+      success: true,
+      message: "Founder profile updated successfully!",
+      founder: {
+        name: dbFounder.name,
+        role: dbFounder.role,
+        instagram: dbFounder.instagram,
+        github: dbFounder.github,
+        linkedin: dbFounder.linkedin,
+        bio: dbFounder.bio,
+        secondaryBio: dbFounder.secondaryBio,
+        imageUrl: "/api/founder/image?v=" + dbFounder.updatedAt
+      }
+    });
+  } catch (err) {
+    console.error("Error updating founder details:", err);
+    return res.status(500).json({ error: "Internal Server Error during profile update." });
   }
 });
 

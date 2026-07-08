@@ -19,6 +19,7 @@ import Footer from './components/Footer';
 import AIAssistant from './components/AIAssistant';
 import AuthModal from './components/AuthModal';
 import AdminPortal from './components/AdminPortal';
+import ReviewsPage from './components/ReviewsPage';
 
 export default function App() {
   const [selectedService, setSelectedService] = useState('');
@@ -26,7 +27,7 @@ export default function App() {
   const [amount, setAmount] = useState('');
   const [aiOpen, setAiOpen] = useState(false);
   const [isAuthModalOpen, setIsAuthModalOpen] = useState(false);
-  const [view, setView] = useState<'landing' | 'admin'>('landing');
+  const [view, setView] = useState<'landing' | 'admin' | 'reviews'>('landing');
 
   // When a user selects a service from packages or capability matrix
   const handleSelectService = (serviceName: string) => {
@@ -52,6 +53,10 @@ export default function App() {
     return <AdminPortal onClose={() => setView('landing')} />;
   }
 
+  if (view === 'reviews') {
+    return <ReviewsPage onClose={() => setView('landing')} />;
+  }
+
   return (
     <div className="bg-slate-950 min-h-screen text-slate-100 selection:bg-cyan-500 selection:text-slate-950 animate-fade-in" id="ub-root-wrapper">
       {/* Translucent Backdrop Navigation */}
@@ -59,6 +64,7 @@ export default function App() {
         onOpenAI={handleOpenAi} 
         onOpenAuth={() => setIsAuthModalOpen(true)} 
         onOpenAdmin={() => setView('admin')} 
+        onOpenReviews={() => setView('reviews')}
       />
 
       {/* Hero Entrance Page */}
@@ -83,7 +89,7 @@ export default function App() {
       <Payment orderId={orderId} amount={amount} />
 
       {/* Testimonial slider reviews */}
-      <Testimonials />
+      <Testimonials onOpenReviews={() => setView('reviews')} />
 
       {/* FAQ accordions */}
       <FAQ />

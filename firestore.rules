@@ -12,17 +12,52 @@ service cloud.firestore {
     function isAdmin() {
       return request.auth != null && request.auth.token.email == 'bajpaiadmin64@gmail.com';
     }
+
+    // Helper functions for content validation
+    function isValidOrder() {
+      let data = request.resource.data;
+      return data.id is string
+        && data.fullName is string
+        && data.email is string
+        && data.phone is string
+        && data.serviceRequired is string
+        && data.projectDescription is string
+        && data.status in ['pending', 'in_progress', 'completed', 'cancelled', 'confirmed']
+        && data.createdAt is string;
+    }
+
+    function isValidReview() {
+      let data = request.resource.data;
+      return data.id is string
+        && data.name is string
+        && data.rating is int
+        && data.rating >= 1
+        && data.rating <= 5
+        && data.title is string
+        && data.review is string
+        && data.country is string
+        && data.approved == false // guests can only submit pending reviews!
+        && data.createdAt is string;
+    }
     
     // User profile rules: Users can only read and write their own profile, Admins can access all
     match /users/{userId} {
       allow read, write: if (request.auth != null && request.auth.uid == userId) || isAdmin();
     }
     
-    // Order rules: Authenticated users can create, read, and update their own orders. Admins have full access.
+    // Order rules: Guests can create valid orders, clients can read their own if authenticated, Admins have full access.
     match /orders/{orderId} {
-      allow create: if (request.auth != null && request.resource.data.userId == request.auth.uid) || isAdmin();
-      allow read, update: if (request.auth != null && (resource.data.userId == request.auth.uid || isAdmin()));
+      allow create: if isValidOrder() || isAdmin();
+      allow read: if isAdmin() || (request.auth != null && resource.data.userId == request.auth.uid);
+      allow update: if isAdmin();
       allow delete: if isAdmin();
+    }
+
+    // Reviews rules: Anyone can read approved/non-hidden reviews, guests can submit pending reviews, Admins have full control
+    match /reviews/{reviewId} {
+      allow read: if isAdmin() || (resource.data.get('approved', false) == true && resource.data.get('hidden', false) != true);
+      allow create: if isValidReview() || isAdmin();
+      allow update, delete: if isAdmin();
     }
   }
 }

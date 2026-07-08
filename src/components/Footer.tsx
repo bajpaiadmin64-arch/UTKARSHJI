@@ -1,5 +1,7 @@
 import React, { useState } from 'react';
-import { Terminal, Github, Linkedin, Twitter, Sparkles, Scale, X } from 'lucide-react';
+import { Terminal, Github, Linkedin, Instagram, Sparkles, Scale, X } from 'lucide-react';
+
+const logoImg = "/src/assets/images/ub_logo_1783522166217.jpg";
 
 export default function Footer() {
   const [activePolicy, setActivePolicy] = useState<'privacy' | 'terms' | null>(null);
@@ -31,8 +33,13 @@ export default function Footer() {
         {/* Col 1: Brand Info */}
         <div className="md:col-span-5 space-y-4">
           <div className="flex items-center space-x-3">
-            <div className="w-8 h-8 rounded-lg bg-gradient-to-tr from-cyan-500 to-purple-600 flex items-center justify-center">
-              <Terminal className="w-4 h-4 text-white" />
+            <div className="w-8 h-8 rounded-lg bg-slate-900 border border-slate-800 flex items-center justify-center overflow-hidden">
+              <img 
+                src={logoImg} 
+                alt="U B Web Developer Brand" 
+                className="w-full h-full object-cover"
+                referrerPolicy="no-referrer"
+              />
             </div>
             <span className="text-lg font-bold text-white tracking-tight">
               U B <span className="bg-gradient-to-r from-cyan-400 to-purple-400 bg-clip-text text-transparent">Web Developer</span>
@@ -43,14 +50,14 @@ export default function Footer() {
           </p>
           {/* Social icons */}
           <div className="flex items-center space-x-3 pt-2">
-            <a href="https://linkedin.com" target="_blank" rel="noreferrer" className="p-2 rounded-lg bg-slate-900 hover:bg-slate-850 hover:text-white transition-colors" aria-label="LinkedIn">
+            <a href="https://linkedin.com/in/utkarshbajpai" target="_blank" rel="noreferrer" className="p-2 rounded-lg bg-slate-900 hover:bg-slate-850 hover:text-blue-400 border border-slate-900 hover:border-slate-800 transition-all active:scale-95" aria-label="LinkedIn">
               <Linkedin className="w-4 h-4" />
             </a>
-            <a href="https://github.com" target="_blank" rel="noreferrer" className="p-2 rounded-lg bg-slate-900 hover:bg-slate-850 hover:text-white transition-colors" aria-label="GitHub">
+            <a href="https://github.com/utkarshbajpai" target="_blank" rel="noreferrer" className="p-2 rounded-lg bg-slate-900 hover:bg-slate-850 hover:text-white border border-slate-900 hover:border-slate-800 transition-all active:scale-95" aria-label="GitHub">
               <Github className="w-4 h-4" />
             </a>
-            <a href="https://twitter.com" target="_blank" rel="noreferrer" className="p-2 rounded-lg bg-slate-900 hover:bg-slate-850 hover:text-white transition-colors" aria-label="Twitter">
-              <Twitter className="w-4 h-4" />
+            <a href="https://instagram.com/bajpaiutkarsh_" target="_blank" rel="noreferrer" className="p-2 rounded-lg bg-slate-900 hover:bg-slate-850 hover:text-pink-500 border border-slate-900 hover:border-slate-800 transition-all active:scale-95" aria-label="Instagram">
+              <Instagram className="w-4 h-4" />
             </a>
           </div>
         </div>
